@@ -91,6 +91,7 @@ export async function handleShopifyWebhook(req: Request, cfg: WebhookConfig): Pr
             presentmentCents: order.presentmentCents,
             presentmentCurrency: order.presentmentCurrency,
             taxesIncluded: order.taxesIncluded,
+            processedAt: order.processedAt,
           })
         : { outcome: order.reason };
     } else if (topic === 'refunds/create') {

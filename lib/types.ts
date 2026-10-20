@@ -30,7 +30,7 @@ export type MemberTier = 'silver' | 'gold' | 'diamond';
 export interface LedgerEntry {
   id: string;
   date: string;
-  kind: 'order' | 'refund' | 'referral_welcome' | 'referral_reward' | 'referral_reversal';
+  kind: 'order' | 'refund' | 'tier_adjustment' | 'referral_welcome' | 'referral_reward' | 'referral_reversal';
   points: number;
   balanceAfter: number;
   description: string;

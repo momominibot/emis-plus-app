@@ -211,6 +211,78 @@ dbTest('fully refunding the qualifying order reverses both bonuses', async (t) =
   await assertLedgerConsistent(t);
 });
 
+// ------------------------------------------------------------ arrival order
+
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items];
+  return items.flatMap((item, i) => permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((rest) => [item, ...rest]));
+}
+
+function paidAt(t: TestDb, order: number, customer: number, cents: number, processedAt: string) {
+  return t.db.recordPaidOrder({
+    webhookId: wh(), orderId: String(order), customerId: String(customer), orderName: '#' + order,
+    amountCents: cents, processedAt,
+  });
+}
+
+dbTest('final balances do not depend on the order webhooks arrive in', async (t) => {
+  // Paid in this order: A S$450, B S$100, C S$200; A later part-refunded S$80.
+  // Spend before B is S$370 and before C S$470, so every order earns 1x.
+  const runs = permutations(['A', 'B', 'C', 'refundA']);
+  assertEquals(runs.length, 24);
+  for (const [k, run] of runs.entries()) {
+    const referrer = 10_000 + k * 10, referee = referrer + 1, base = 100_000 + k * 10;
+    await t.db.claimReferral(String(referee), await codeOf(t, referrer), false);
+    for (const event of run) {
+      if (event === 'A') await paidAt(t, base + 1, referee, 45000, '2026-10-01T10:00:00+08:00');
+      if (event === 'B') await paidAt(t, base + 2, referee, 10000, '2026-10-02T10:00:00+08:00');
+      if (event === 'C') await paidAt(t, base + 3, referee, 20000, '2026-10-03T10:00:00+08:00');
+      if (event === 'refundA') await refund(t, base + 9, base + 1, 8000);
+    }
+    const m = await member(t, referee);
+    assertEquals([m.points, m.totalSpentCents, m.referredStatus], [450 - 80 + 100 + 200 + 100, 67000, 'completed'], run.join(','));
+    assertEquals(await points(t, referrer), 100, run.join(','));
+  }
+  // Without the refund, C is paid after S$550 of spend and earns at gold (1.5x) whatever arrives first.
+  for (const [k, run] of permutations(['A', 'B', 'C']).entries()) {
+    const customer = 30_000 + k, base = 300_000 + k * 10;
+    for (const event of run) {
+      if (event === 'A') await paidAt(t, base + 1, customer, 45000, '2026-10-01T10:00:00+08:00');
+      if (event === 'B') await paidAt(t, base + 2, customer, 10000, '2026-10-02T10:00:00+08:00');
+      if (event === 'C') await paidAt(t, base + 3, customer, 20000, '2026-10-03T10:00:00+08:00');
+    }
+    assertEquals(await points(t, customer), 450 + 100 + 300, run.join(','));
+  }
+  await assertLedgerConsistent(t);
+});
+
+dbTest('the referral follows the order paid first, even when it arrives last', async (t) => {
+  // A (paid first) is refunded in full; B was paid later and kept. The referral rides on A, so it ends reversed.
+  for (const [k, run] of permutations(['A', 'B', 'refundA']).entries()) {
+    const referrer = 20_000 + k * 10, referee = referrer + 1, base = 200_000 + k * 10;
+    await t.db.claimReferral(String(referee), await codeOf(t, referrer), false);
+    for (const event of run) {
+      if (event === 'A') await paidAt(t, base + 1, referee, 5000, '2026-10-01T10:00:00+08:00');
+      if (event === 'B') await paidAt(t, base + 2, referee, 3000, '2026-10-02T10:00:00+08:00');
+      if (event === 'refundA') await refund(t, base + 9, base + 1, 5000);
+    }
+    assertEquals((await member(t, referee)).referredStatus, 'reversed', run.join(','));
+    assertEquals(await points(t, referee), 30, run.join(','));
+    assertEquals(await points(t, referrer), 0, run.join(','));
+  }
+  await assertLedgerConsistent(t);
+});
+
+dbTest('a late earlier order re-prices the later ones', async (t) => {
+  await paidAt(t, 2, 5, 10000, '2026-10-02T10:00:00+08:00'); // arrives first: 1x = 100
+  await paidAt(t, 1, 5, 50000, '2026-10-01T10:00:00+08:00'); // paid first: 1x = 500, B now at gold
+  assertEquals(await points(t, 5), 500 + 150);
+  const m = await member(t, 5);
+  assertEquals(m.transactions.map((x: { kind: string; points: number }) => [x.kind, x.points]),
+    [['tier_adjustment', 50], ['order', 500], ['order', 100]]);
+  await assertLedgerConsistent(t);
+});
+
 // --------------------------------------------------------------- concurrency
 
 dbTest('parallel deliveries of one order award it exactly once', async (t) => {

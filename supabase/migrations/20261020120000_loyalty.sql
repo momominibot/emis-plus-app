@@ -14,6 +14,11 @@
 --     never back to someone they referred. Both bonuses wait for the new
 --     customer's first paid order of at least S$1, and both are reversed if
 --     refunds leave less than S$1 of that order.
+--   * Arrival order does not matter: after every order or refund the
+--     customer's tier rates are re-priced in payment order (processed_at)
+--     and the referral is worked out from the order that was really paid
+--     first, so the final balances are the same however Shopify's webhooks
+--     arrive (see reconcile_customer).
 --
 -- Amounts are integer cents (SGD). Tier multipliers are stored x10 so all
 -- arithmetic stays in integers: points = floor(cents * multiplier_x10 / 1000).
@@ -36,6 +41,7 @@ create table loyalty.orders (
   order_id       bigint primary key check (order_id > 0),
   customer_id    bigint not null references loyalty.members,
   order_name     text,
+  processed_at   timestamptz not null default now(),  -- when Shopify says the order was placed
   amount_cents   bigint not null check (amount_cents >= 0),
   -- Same subtotal in the currency the customer paid in, to convert refunds
   -- whose transactions are in that currency.
@@ -54,7 +60,7 @@ create table loyalty.orders (
   check (refunded_cents between 0 and amount_cents),
   check (points_clawed between 0 and points_earned)
 );
-create index orders_customer_idx on loyalty.orders (customer_id);
+create index orders_customer_idx on loyalty.orders (customer_id, processed_at, order_id);
 
 -- Refunds are stored as Shopify reported them, even before their order has
 -- been awarded (webhook order is not guaranteed); record_paid_order applies
@@ -95,7 +101,7 @@ create table loyalty.ledger (
   id            bigint generated always as identity primary key,
   customer_id   bigint not null references loyalty.members,
   kind          text not null
-                check (kind in ('order', 'refund', 'referral_welcome', 'referral_reward', 'referral_reversal')),
+                check (kind in ('order', 'refund', 'tier_adjustment', 'referral_welcome', 'referral_reward', 'referral_reversal')),
   points        integer not null check (points <> 0),
   balance_after bigint not null,
   order_id      bigint,
@@ -106,8 +112,9 @@ create table loyalty.ledger (
 );
 create unique index ledger_one_order_award on loyalty.ledger (order_id) where kind = 'order';
 create unique index ledger_one_refund on loyalty.ledger (refund_id) where kind = 'refund';
-create unique index ledger_one_referral_entry on loyalty.ledger (referral_id, kind, customer_id)
-  where referral_id is not null;
+-- Referral entries are not unique: reconcile_customer posts whatever brings
+-- each side's net bonus to 100 or 0, so a referral can be undone and redone.
+create index ledger_referral_idx on loyalty.ledger (referral_id, customer_id) where referral_id is not null;
 create index ledger_customer_idx on loyalty.ledger (customer_id, id desc);
 
 -- Audit trail of deliveries; also drops exact redeliveries early.
@@ -237,7 +244,6 @@ language plpgsql volatile set search_path = '' as $$
 declare
   r loyalty.refunds;
   o loyalty.orders;
-  ref loyalty.referrals;
   v_tx_merch bigint;
   v_merch_p bigint;
   v_presentment_after bigint;
@@ -295,22 +301,94 @@ begin
       o.order_id, r.refund_id, null);
   end if;
 
-  -- A referral that this order completed is undone once less than S$1 of
-  -- the order is kept, so refunded orders cannot farm referral bonuses.
-  if o.amount_cents - v_refunded < 100 and o.amount_cents - o.refunded_cents >= 100 then
-    select * into ref from loyalty.referrals
-      where qualifying_order_id = o.order_id and status = 'completed' for update;
-    if found then
-      perform 1 from loyalty.members where customer_id = ref.referrer_id for update;
-      update loyalty.referrals set status = 'reversed' where id = ref.id;
-      perform loyalty.add_points(ref.referee_id, 'referral_reversal', -100,
-        'Welcome bonus reversed: first order refunded', o.order_id, r.refund_id, ref.id);
-      perform loyalty.add_points(ref.referrer_id, 'referral_reversal', -100,
-        'Referral bonus reversed: friend''s first order refunded', o.order_id, r.refund_id, ref.id);
-    end if;
-  end if;
   update loyalty.refunds set applied = true, amount_cents = v_amount where refund_id = r.refund_id;
   return v_claw;
+end
+$$;
+
+-- Brings one customer's awards in line with the full history we know of,
+-- independent of the order in which webhooks arrived:
+--   1. each order's tier rate comes from the net spend (after refunds) of the
+--      orders paid before it (processed_at); any change is posted as a
+--      tier_adjustment entry;
+--   2. their referral (as the new customer) follows their first paid order
+--      of at least S$1: completed while it keeps at least S$1, reversed once
+--      it keeps less, pending while there is none. Each side's net referral
+--      points are brought to 100 or 0.
+-- Caller holds the member locks of the customer and of their referrer.
+create function loyalty.reconcile_customer(p_customer_id bigint) returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  o record;
+  v_before bigint := 0;
+  v_mult integer;
+  v_earned integer;
+  v_clawed integer;
+  v_delta integer;
+  ref loyalty.referrals;
+  v_first loyalty.orders;
+  v_status text;
+  v_want integer;
+  v_have integer;
+  v_side record;
+begin
+  for o in
+    select * from loyalty.orders where customer_id = p_customer_id
+     order by processed_at, order_id for update
+  loop
+    v_mult := loyalty.multiplier_x10(v_before);
+    if v_mult <> o.multiplier_x10 then
+      v_earned := (o.amount_cents * v_mult / 1000)::integer;
+      v_clawed := v_earned - ((o.amount_cents - o.refunded_cents) * v_mult / 1000)::integer;
+      v_delta := (v_earned - v_clawed) - (o.points_earned - o.points_clawed);
+      update loyalty.orders set multiplier_x10 = v_mult, points_earned = v_earned, points_clawed = v_clawed
+       where order_id = o.order_id;
+      if v_delta <> 0 then
+        perform loyalty.add_points(p_customer_id, 'tier_adjustment', v_delta,
+          'Tier rate updated for order ' || coalesce(o.order_name, '#' || o.order_id::text), o.order_id, null, null);
+      end if;
+    end if;
+    v_before := v_before + o.amount_cents - o.refunded_cents;
+  end loop;
+
+  select * into ref from loyalty.referrals where referee_id = p_customer_id for update;
+  if not found then
+    return;
+  end if;
+  select * into v_first from loyalty.orders
+   where customer_id = p_customer_id and amount_cents >= 100
+   order by processed_at, order_id limit 1;
+  if v_first.order_id is null then
+    v_status := 'pending';
+  elsif v_first.amount_cents - v_first.refunded_cents >= 100 then
+    v_status := 'completed';
+  else
+    v_status := 'reversed';
+  end if;
+  v_want := case when v_status = 'completed' then 100 else 0 end;
+
+  for v_side in
+    select ref.referee_id as customer_id, 'referral_welcome' as up, 'Welcome bonus: referred by a friend' as up_text,
+           'Welcome bonus reversed: first order refunded' as down_text
+    union all
+    select ref.referrer_id, 'referral_reward', 'Referral bonus: a friend placed their first order',
+           'Referral bonus reversed: friend''s first order refunded'
+  loop
+    select coalesce(sum(points), 0)::integer into v_have
+      from loyalty.ledger where referral_id = ref.id and customer_id = v_side.customer_id;
+    if v_want <> v_have then
+      perform loyalty.add_points(v_side.customer_id,
+        case when v_want > v_have then v_side.up else 'referral_reversal' end, v_want - v_have,
+        case when v_want > v_have then v_side.up_text else v_side.down_text end,
+        v_first.order_id, null, ref.id);
+    end if;
+  end loop;
+
+  if v_status <> 'pending' and (ref.status <> v_status or ref.qualifying_order_id is distinct from v_first.order_id) then
+    update loyalty.referrals
+       set status = v_status, qualifying_order_id = v_first.order_id, completed_at = coalesce(completed_at, now())
+     where id = ref.id;
+  end if;
 end
 $$;
 
@@ -318,12 +396,14 @@ $$;
 
 create function loyalty.record_paid_order(
   p_webhook_id text, p_order_id bigint, p_customer_id bigint, p_order_name text, p_amount_cents bigint,
-  p_presentment_cents bigint default null, p_presentment_currency text default null, p_taxes_included boolean default true
+  p_presentment_cents bigint default null, p_presentment_currency text default null, p_taxes_included boolean default true,
+  p_processed_at timestamptz default null
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   v_referrer bigint;
-  ref loyalty.referrals;
+  v_referrer_now bigint;
+  v_processed timestamptz := coalesce(p_processed_at, now());
   v_spent bigint;
   v_mult integer;
   v_points integer;
@@ -351,21 +431,29 @@ begin
   else
     perform loyalty.ensure_member(p_customer_id);
 
-    -- Lock the member rows in id order (customer, and referrer if this order
-    -- completes a referral) so concurrent orders cannot deadlock.
-    select referrer_id into v_referrer
-      from loyalty.referrals where referee_id = p_customer_id and status = 'pending';
+    -- Lock the member rows in id order (customer, and their referrer if they
+    -- were referred) so concurrent orders cannot deadlock.
+    select referrer_id into v_referrer from loyalty.referrals where referee_id = p_customer_id;
     perform 1 from loyalty.members
       where customer_id in (p_customer_id, v_referrer)
       order by customer_id for update;
+    select referrer_id into v_referrer_now from loyalty.referrals where referee_id = p_customer_id;
+    if v_referrer is distinct from v_referrer_now then
+      -- Claimed between our lookup and our lock: retry with the right lock order.
+      raise exception 'referral changed while locking' using errcode = '40001';
+    end if;
 
-    select total_spent_cents into strict v_spent from loyalty.members where customer_id = p_customer_id;
+    -- Tier rate from what was paid before this order (later orders are
+    -- re-priced by reconcile_customer if this one arrived late).
+    select coalesce(sum(amount_cents - refunded_cents), 0) into v_spent
+      from loyalty.orders
+     where customer_id = p_customer_id and (processed_at, order_id) < (v_processed, p_order_id);
     v_mult := loyalty.multiplier_x10(v_spent);
     v_points := (p_amount_cents * v_mult / 1000)::integer;
 
-    insert into loyalty.orders (order_id, customer_id, order_name, amount_cents, multiplier_x10, points_earned,
+    insert into loyalty.orders (order_id, customer_id, order_name, processed_at, amount_cents, multiplier_x10, points_earned,
                                 presentment_cents, presentment_currency, taxes_included)
-    values (p_order_id, p_customer_id, p_order_name, p_amount_cents, v_mult, v_points,
+    values (p_order_id, p_customer_id, p_order_name, v_processed, p_amount_cents, v_mult, v_points,
             p_presentment_cents, p_presentment_currency, coalesce(p_taxes_included, true));
     update loyalty.members
        set total_spent_cents = total_spent_cents + p_amount_cents, updated_at = now()
@@ -375,31 +463,14 @@ begin
         'Order ' || coalesce(p_order_name, '#' || p_order_id::text), p_order_id, null, null);
     end if;
 
-    -- First paid order of at least S$1 completes a pending referral.
-    -- Done before applying early refunds, so a first order that was already
-    -- refunded in full completes and is then reversed like any other.
-    select * into ref from loyalty.referrals
-      where referee_id = p_customer_id and status = 'pending' for update;
-    if found and p_amount_cents >= 100 then
-      if v_referrer is distinct from ref.referrer_id then
-        -- Claimed between our lookup and our lock: retry with the right lock order.
-        raise exception 'referral changed while locking' using errcode = '40001';
-      end if;
-      update loyalty.referrals
-         set status = 'completed', qualifying_order_id = p_order_id, completed_at = now()
-       where id = ref.id;
-      perform loyalty.add_points(p_customer_id, 'referral_welcome', 100,
-        'Welcome bonus: referred by a friend', p_order_id, null, ref.id);
-      perform loyalty.add_points(ref.referrer_id, 'referral_reward', 100,
-        'Referral bonus: a friend placed their first order', p_order_id, null, ref.id);
-    end if;
-
     -- Refunds that arrived before this award.
     for v_refund in
       select refund_id from loyalty.refunds where order_id = p_order_id and not applied order by refund_id
     loop
       perform loyalty.apply_refund(v_refund.refund_id);
     end loop;
+
+    perform loyalty.reconcile_customer(p_customer_id);
 
     select status into v_referral from loyalty.referrals
       where referee_id = p_customer_id and qualifying_order_id = p_order_id;
@@ -453,14 +524,17 @@ begin
   if not found then
     v_result := jsonb_build_object('outcome', 'stored_until_order_awarded');
   else
-    -- Lock the customer and, if this order earned a referral, the referrer,
-    -- in id order like every other path.
-    select referrer_id into v_referrer from loyalty.referrals
-      where qualifying_order_id = p_order_id and status = 'completed';
+    -- Lock the customer and, if they were referred, their referrer, in id
+    -- order like every other path.
+    select referrer_id into v_referrer from loyalty.referrals where referee_id = v_customer;
     perform 1 from loyalty.members
       where customer_id in (v_customer, v_referrer)
       order by customer_id for update;
+    if v_referrer is distinct from (select referrer_id from loyalty.referrals where referee_id = v_customer) then
+      raise exception 'referral changed while locking' using errcode = '40001';
+    end if;
     v_claw := loyalty.apply_refund(p_refund_id);
+    perform loyalty.reconcile_customer(v_customer);
     v_result := jsonb_build_object('outcome', 'applied', 'clawed_back', v_claw);
   end if;
 

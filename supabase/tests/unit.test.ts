@@ -35,6 +35,7 @@ function paidPayload(extra: Record<string, unknown> = {}) {
     admin_graphql_api_id: 'gid://shopify/Order/6252199051413',
     name: '#1042',
     test: false,
+    processed_at: '2026-10-01T11:00:00+08:00',
     financial_status: 'paid',
     subtotal_price_set: { shop_money: { amount: '123.45', currency_code: 'SGD' }, presentment_money: { amount: '123.45', currency_code: 'SGD' } },
     customer: { id: 7012345678901, admin_graphql_api_id: 'gid://shopify/Customer/7012345678901', email: 'x@example.com' },
@@ -82,7 +83,7 @@ Deno.test('parsePaidOrder awards only paid, SGD, non-test, customer orders', () 
   const opts = { currency: 'SGD', allowTestOrders: false };
   assertEquals(parsePaidOrder(paidPayload(), opts), {
     ok: true, orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
-    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true,
+    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true, processedAt: '2026-10-01T11:00:00+08:00',
   });
   const usd = parsePaidOrder(paidPayload({
     taxes_included: false,
@@ -211,7 +212,7 @@ Deno.test('webhook: signed orders/paid is passed to the database', async () => {
   assertEquals(res.status, 200);
   assertEquals(calls.paid, [{
     webhookId: 'wh-1', orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
-    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true,
+    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true, processedAt: '2026-10-01T11:00:00+08:00',
   }]);
 });
 

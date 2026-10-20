@@ -23,7 +23,7 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
         select loyalty.record_paid_order(${o.webhookId}, ${o.orderId}::bigint, ${o.customerId}::bigint,
                                          ${o.orderName}, ${o.amountCents}::bigint,
                                          ${o.presentmentCents ?? null}::bigint, ${o.presentmentCurrency ?? null},
-                                         ${o.taxesIncluded ?? true}) as r`;
+                                         ${o.taxesIncluded ?? true}, ${o.processedAt ?? null}::timestamptz) as r`;
       return row.r;
     },
     async recordRefund(r) {

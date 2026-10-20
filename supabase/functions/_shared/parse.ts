@@ -54,6 +54,11 @@ export function moneyToCents(value: unknown): number {
 
 type Obj = Record<string, unknown>;
 
+/** A Shopify timestamp ("2026-10-01T11:00:00+08:00"), or null if it is not one. */
+function isoTime(value: unknown): string | null {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 function obj(value: unknown): Obj | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Obj) : null;
 }
@@ -73,6 +78,8 @@ export type PaidOrderParse =
       presentmentCents: number | null;
       presentmentCurrency: string | null;
       taxesIncluded: boolean;
+      /** When the order was placed (ISO 8601), used to price orders in payment order. */
+      processedAt: string | null;
     }
   | { ok: false; reason: string };
 
@@ -109,6 +116,7 @@ export function parsePaidOrder(payload: unknown, opts: { currency: string; allow
       presentmentCurrency,
       // Unknown counts as tax-inclusive (Singapore prices include GST), which claws back more, not less.
       taxesIncluded: order.taxes_included !== false,
+      processedAt: isoTime(order.processed_at) ?? isoTime(order.created_at),
     };
   } catch {
     return { ok: false, reason: 'invalid_payload' };

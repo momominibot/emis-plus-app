@@ -10,6 +10,7 @@ export interface PaidOrderInput {
   presentmentCents?: number | null;
   presentmentCurrency?: string | null;
   taxesIncluded?: boolean;
+  processedAt?: string | null;
 }
 
 export interface RefundInput {
