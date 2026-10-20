@@ -47,12 +47,11 @@ npm run web        # Web preview
 ```
 
 ### Environment
-Create `.env` in the app root:
+Create `.env` in the app root (client-side only, no secrets):
 ```
-EXPO_PUBLIC_SHOPIFY_ADMIN_TOKEN=shpat_xxx
-EXPO_PUBLIC_SHOP_DOMAIN=4a6920-67.myshopify.com
 EXPO_PUBLIC_BACKEND_URL=https://your-backend.vercel.app
 ```
+All Shopify and AI API keys live only on the backend (Vercel env vars). Never put secrets in `EXPO_PUBLIC_` variables.
 
 ## Backend Deployment
 
@@ -63,10 +62,12 @@ vercel --prod
 ```
 
 Set environment variables in Vercel dashboard:
-- `SHOPIFY_ADMIN_TOKEN` - Shopify Admin API token
+- `SHOPIFY_ADMIN_TOKEN` - Shopify Admin API token (shpat_ prefix, server-side only)
+- `SHOP_DOMAIN` - Shopify store domain (e.g. 4a6920-67.myshopify.com)
 - `SHOPIFY_WEBHOOK_SECRET` - Webhook signing secret
-- `AI_API_KEY` - Volcengine Ark API key
-- `LOYALTY_DB_URL` - Database connection (Postgres/Supabase)
+- `AI_API_KEY` - OpenRouter API key
+- `AI_BASE_URL` - OpenRouter base URL (https://openrouter.ai/api/v1)
+- `AI_MODEL` - AI model (e.g. openai/gpt-4o-mini)
 
 ### Shopify Webhook Setup
 1. Go to Shopify Admin > Settings > Notifications > Webhooks
