@@ -41,6 +41,7 @@ function RootLayoutNav() {
         <Stack.Screen name="tools/hydration" options={{ title: 'Stoma Output & Hydration' }} />
         <Stack.Screen name="tools/wound-nutrition" options={{ title: 'Wound Nutrition' }} />
         <Stack.Screen name="guide/[slug]" options={{ title: 'Guide' }} />
+        <Stack.Screen name="reel/[id]" options={{ title: 'Reel' }} />
         <Stack.Screen name="orders" options={{ title: 'My Orders' }} />
       </Stack>
     </ThemeProvider>

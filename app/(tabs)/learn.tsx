@@ -12,6 +12,8 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { ARTICLES, type ArticleCategory } from '@/lib/education/articles';
 import { EDUCATION_BLOGS, getBlogArticles, type BlogArticle } from '@/lib/shopify';
+import { latestReels, REELS_CHANNEL_URL, WOUND_CARE_SERIES } from '@/lib/education/reels';
+import ReelCard from '@/components/ReelCard';
 
 const CATEGORY_ICON: Record<ArticleCategory, string> = {
   'Wound healing': 'bandage',
@@ -49,6 +51,24 @@ export default function LearnScreen() {
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Plain-language guides for patients and carers. Each guide lists the clinical sources it is based on.
         </Text>
+
+        <View style={{ marginTop: 20 }}>
+          <View style={styles.rowHead}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.groupTitle, { color: colors.text, paddingHorizontal: 0, marginBottom: 2 }]}>Watch: Wound care explained</Text>
+              <Text style={[styles.guideMeta, { color: colors.textSecondary, marginTop: 0 }]}>
+                Our latest reel series, {WOUND_CARE_SERIES.length} short episodes
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => WebBrowser.openBrowserAsync(REELS_CHANNEL_URL)}>
+              <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 14 }}>YouTube</Text>
+            </TouchableOpacity>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0 }}
+            contentContainerStyle={{ gap: 10, paddingHorizontal: 20, paddingVertical: 4 }}>
+            {latestReels().map((r, i) => <ReelCard key={r.id} reel={r} isNew={i === 0} />)}
+          </ScrollView>
+        </View>
 
         {CATEGORIES.map(cat => {
           const items = ARTICLES.filter(a => a.category === cat);
@@ -130,6 +150,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '700', paddingHorizontal: 20, paddingTop: 8 },
   subtitle: { fontSize: 14, lineHeight: 20, paddingHorizontal: 20, marginTop: 4 },
   groupTitle: { fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 10 },
+  rowHead: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 20, marginBottom: 10, gap: 12 },
   guideRow: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, gap: 14 },
   guideIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   guideTitle: { fontSize: 16, fontWeight: '700' },
