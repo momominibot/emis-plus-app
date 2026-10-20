@@ -66,7 +66,8 @@ export default function OrdersScreen() {
         setError({ owner: askedFor, message: err instanceof Error ? err.message : 'Could not load your orders.' });
       }
     } finally {
-      setLoading(false);
+      // Only the newest load decides; an outdated one must not re-enable "show more" mid-refresh.
+      if (requestRef.current === request) setLoading(false);
     }
   }, [key, nextCursor]);
 

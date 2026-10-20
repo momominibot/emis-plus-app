@@ -314,6 +314,32 @@ dbTest('refunding a foreign-currency order in parts still adds up to a full refu
   assertEquals(await points(t, 2), 0);
 });
 
+dbTest('a shipping refund between foreign-currency part refunds cannot keep the bonuses', async (t) => {
+  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await t.db.recordPaidOrder({
+    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 13500,
+    presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
+  }); // S$135 of goods paid as US$100
+  await refundParts(t, 1, 10, { txCents: 3335, txCurrency: 'USD' });
+  await refundParts(t, 2, 10, { txCents: 741, txCurrency: 'USD', otherCents: 1001 }); // shipping only
+  await refundParts(t, 3, 10, { txCents: 6665, txCurrency: 'USD' });
+  const [o] = await t.sql`select amount_cents - refunded_cents as kept from loyalty.orders`;
+  assert(Number(o.kept) < 100, 'at most a rounding cent is left: ' + o.kept);
+  assertEquals((await member(t, 2)).referredStatus, 'reversed');
+  assertEquals(await points(t, 1), 0);
+});
+
+dbTest('referrals need a first order of at least S$1 that keeps at least S$1', async (t) => {
+  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  assertEquals((await paid(t, 10, 2, 99)).referral, null);
+  assertEquals((await paid(t, 11, 2, 500)).referral, 'completed');
+  await refund(t, 1, 11, 400); // S$1.00 kept: bonuses stay
+  assertEquals((await member(t, 2)).referredStatus, 'completed');
+  await refund(t, 2, 11, 1); // S$0.99 kept: reversed
+  assertEquals((await member(t, 2)).referredStatus, 'reversed');
+  await assertLedgerConsistent(t);
+});
+
 dbTest('tax-exclusive orders do not count item tax as merchandise', async (t) => {
   await t.db.recordPaidOrder({
     webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000, taxesIncluded: false,

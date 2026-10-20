@@ -154,6 +154,16 @@ Deno.test('parseRefund reports items, tax, money returned and shipping separatel
     }, opts),
     { ok: true, ...ids, lineCents: 2000, lineTaxCents: 0, txCents: 4090, txCurrency: null, otherCents: 2090 },
   );
+  // Discounted shipping: S$20 list price cut to S$10, S$0.90 tax, refunded in full.
+  const discounted = parseRefund({
+    ...base, refund_line_items: [],
+    transactions: [{ kind: 'refund', status: 'success', amount: '10.90' }],
+    refund_shipping_lines: [{
+      subtotal_amount_set: money('10.00'),
+      shipping_line: { price_set: money('20.00'), discounted_price_set: money('10.00'), tax_lines: [{ price_set: money('0.90') }] },
+    }],
+  }, opts);
+  assertEquals(discounted.ok && [discounted.txCents, discounted.otherCents], [1090, 1090]);
   assertEquals(parseRefund({ ...base, refund_line_items: [{ subtotal_set: money('1.00', 'USD') }] }, opts), { ok: false, reason: 'ignored_currency' });
   assertEquals(
     parseRefund({ ...base, transactions: [{ kind: 'refund', status: 'success', amount: '1', currency: 'USD' }, { kind: 'refund', status: 'success', amount: '1', currency: 'SGD' }] }, opts),

@@ -131,9 +131,10 @@ function adopt(stored: Session | null) {
 }
 
 /**
- * Web: one tab at a time may refresh, sign in or sign out (Web Locks API),
- * so a refresh in one tab cannot write back an account another tab just
- * signed out of. Native has one JS context and needs no lock.
+ * Web: one tab at a time may refresh or finish a sign-in (Web Locks API).
+ * Sign-out and expiry never wait for it; instead every refresh re-reads
+ * storage before writing, so it cannot write back an account another tab
+ * just signed out of. Native has one JS context and needs no lock.
  */
 function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
   const locks = Platform.OS === 'web' && typeof navigator !== 'undefined'
@@ -178,11 +179,20 @@ class TokenError extends Error {
 type TokenResponse = { access_token: string; expires_in: number; id_token?: string; refresh_token?: string };
 
 async function tokenRequest(endpoint: string, fields: Record<string, string>): Promise<TokenResponse> {
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: formBody(fields),
-  });
+  // A stalled request must not hold the cross-tab lock forever.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 15_000);
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formBody(fields),
+      signal: abort.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || typeof data.access_token !== 'string' || typeof data.expires_in !== 'number') {
     throw new TokenError(res.status, data.error);
@@ -328,6 +338,9 @@ async function refresh(s: Session): Promise<void> {
     try {
       const d = await getDiscovery();
       const t = await tokenRequest(d.tokenEndpoint, { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: s.refreshToken });
+      // Signing out does not wait for this lock; if the stored session changed
+      // while the request was out, keep that change instead of writing ours.
+      if (Platform.OS === 'web' && !(await storedStill(s))) return;
       await commit({
         ...s,
         accessToken: t.access_token,
@@ -337,6 +350,7 @@ async function refresh(s: Session): Promise<void> {
       }, gen);
     } catch (err) {
       if (err instanceof TokenError && (err.status === 400 || err.status === 401) && DEAD_GRANT.has(err.code ?? '')) {
+        if (Platform.OS === 'web' && !(await storedStill(s))) return;
         await commit(null, gen); // refresh token rejected: signed out
         return;
       }
@@ -361,14 +375,25 @@ export async function getAccessToken(): Promise<string | null> {
   return now && accountOf(now) === accountOf(s) && now.expiresAt - Date.now() > 60_000 ? now.accessToken : null;
 }
 
+/** Web: true if storage still holds exactly this session (no other tab changed it). */
+async function storedStill(s: Session): Promise<boolean> {
+  const stored = await readStored();
+  if (stored && stored.accessToken === s.accessToken && stored.refreshToken === s.refreshToken) return true;
+  adopt(stored);
+  return false;
+}
+
 /** Called when Shopify rejects a token: sign out, unless the session has moved on since. */
 export async function expireSession(rejectedToken: string): Promise<void> {
+  if (!current || current.accessToken !== rejectedToken) return;
+  if (Platform.OS === 'web' && !(await storedStill(current))) return; // another tab already moved on
   if (current && current.accessToken === rejectedToken) await commit(null);
 }
 
+/** Signs out at once, locally first; it never waits behind a refresh in progress. */
 export async function signOut(): Promise<void> {
   const s = await loadSession();
-  await withAuthLock(() => commit(null));
+  await commit(null);
   if (!s) return;
   try {
     const d = await getDiscovery();

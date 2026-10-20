@@ -196,7 +196,8 @@ class CurrencyError extends Error {}
  */
 function shippingTaxShare(shippingLine: Obj | null, refundedCents: number, shopCents: (set: unknown) => number): number {
   if (!shippingLine || refundedCents <= 0) return 0;
-  const price = shopCents(shippingLine.price_set);
+  // What the customer actually paid for shipping, after shipping discounts.
+  const price = shopCents(shippingLine.discounted_price_set ?? shippingLine.price_set);
   let tax = 0;
   for (const raw of Array.isArray(shippingLine.tax_lines) ? shippingLine.tax_lines : []) tax += shopCents(obj(raw)?.price_set);
   if (!price || !tax) return 0;

@@ -12,8 +12,9 @@
 --   * A referral code belongs to a real member, each customer can claim one
 --     code once, only while they have no orders, never their own code and
 --     never back to someone they referred. Both bonuses wait for the new
---     customer's first paid order, and both are reversed if that order is
---     later refunded in full.
+--     customer's first paid order of at least S$1, and both are reversed if
+--     refunds leave less than S$1 of that order (a whole-dollar threshold, so
+--     currency rounding of a cent can never keep the bonuses alive).
 --
 -- Amounts are integer cents (SGD). Tier multipliers are stored x10 so all
 -- arithmetic stays in integers: points = floor(cents * multiplier_x10 / 1000).
@@ -284,9 +285,9 @@ begin
       o.order_id, r.refund_id, null);
   end if;
 
-  -- A referral that this order completed is undone once nothing of the
-  -- order is kept, so refunded orders cannot farm referral bonuses.
-  if v_refunded = o.amount_cents and o.refunded_cents < o.amount_cents then
+  -- A referral that this order completed is undone once less than S$1 of
+  -- the order is kept, so refunded orders cannot farm referral bonuses.
+  if o.amount_cents - v_refunded < 100 and o.amount_cents - o.refunded_cents >= 100 then
     select * into ref from loyalty.referrals
       where qualifying_order_id = o.order_id and status = 'completed' for update;
     if found then
@@ -364,12 +365,12 @@ begin
         'Order ' || coalesce(p_order_name, '#' || p_order_id::text), p_order_id, null, null);
     end if;
 
-    -- First paid order completes a pending referral (never a free order).
+    -- First paid order of at least S$1 completes a pending referral.
     -- Done before applying early refunds, so a first order that was already
     -- refunded in full completes and is then reversed like any other.
     select * into ref from loyalty.referrals
       where referee_id = p_customer_id and status = 'pending' for update;
-    if found and p_amount_cents > 0 then
+    if found and p_amount_cents >= 100 then
       if v_referrer is distinct from ref.referrer_id then
         -- Claimed between our lookup and our lock: retry with the right lock order.
         raise exception 'referral changed while locking' using errcode = '40001';
