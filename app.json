@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "emis-app",
+    "name": "EMIS+",
     "slug": "emis-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,21 +8,36 @@
     "scheme": "emisapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "asia.emis.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to scan QR codes for local device-to-device data transfer",
+        "NSPhotoLibraryUsageDescription": "Used to attach photos to wound records",
+        "NSHealthShareUsageDescription": "Not used - all health data stays local",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "asia.emis.app",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0d9488",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "baseUrl": "/emis-plus-app"
     },
     "plugins": [
       "expo-router",
@@ -31,12 +46,29 @@
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff"
+          "backgroundColor": "#0d9488"
+        }
+      ],
+      "expo-sqlite",
+      "expo-sharing",
+      "expo-secure-store",
+      "expo-image",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow EMIS+ to use your camera for QR code scanning and wound photos."
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a0a43dad-31a1-40be-b876-2834a48b68cc"
+      }
+    },
+    "owner": "momomini"
   }
 }

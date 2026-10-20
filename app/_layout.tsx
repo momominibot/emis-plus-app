@@ -1,55 +1,41 @@
-import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
-import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
   initialRouteName: '(tabs)',
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
-  const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-  });
-
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  if (!loaded) {
-    return null;
-  }
-
   return <RootLayoutNav />;
 }
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
+  const colors = Colors[colorScheme];
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.text,
+          headerTitleStyle: { fontWeight: '700' },
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="ai-assistant" options={{ title: 'Product Assistant' }} />
+        <Stack.Screen name="product/[handle]" options={{ title: 'Product' }} />
+        <Stack.Screen name="tools/compression" options={{ title: 'Compression Stocking' }} />
+        <Stack.Screen name="tools/wound" options={{ title: 'Wound Tracker' }} />
+        <Stack.Screen name="tools/ostomy" options={{ title: 'Ostomy Log' }} />
+        <Stack.Screen name="tools/intake-output" options={{ title: 'Intake & Output' }} />
+        <Stack.Screen name="tools/vitals" options={{ title: 'Vitals Monitor' }} />
+        <Stack.Screen name="tools/export" options={{ title: 'Export & Transfer' }} />
       </Stack>
     </ThemeProvider>
   );
