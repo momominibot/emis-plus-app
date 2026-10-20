@@ -1,6 +1,6 @@
 import { View, Text } from 'react-native';
 import { Tabs } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Colors from '@/constants/Colors';
@@ -17,7 +17,7 @@ function TabIcon({ name, focused, color }: { name: string; focused: boolean; col
       justifyContent: 'center',
       backgroundColor: focused ? colors.primaryLight : 'transparent',
     }}>
-      <Ionicons name={name as any} size={22} color={color} />
+      <Icon name={name as any} size={22} color={color} />
     </View>
   );
 }

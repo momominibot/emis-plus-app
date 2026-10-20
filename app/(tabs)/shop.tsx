@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, TextInput, FlatList } from 'react-native';
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { getCollections, getProducts, searchProducts } from '@/lib/shopify';
@@ -76,7 +76,7 @@ export default function ShopScreen() {
       <Text style={[styles.title, { color: colors.text }]}>Shop</Text>
 
       <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.borderStrong }]}>
-        <Ionicons name="search" size={18} color={colors.textTertiary} />
+        <Icon name="search" size={18} color={colors.textTertiary} />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
           placeholder="Search products..."
@@ -88,7 +88,7 @@ export default function ShopScreen() {
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => { setSearchQuery(''); loadProducts(activeCategory || undefined); }} hitSlop={10}>
-            <Ionicons name="close-circle" size={18} color={colors.textTertiary} />
+            <Icon name="close-circle" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         )}
       </View>
@@ -152,7 +152,7 @@ export default function ShopScreen() {
           <View style={styles.empty}>
             {error ? (
               <>
-                <Ionicons name="alert-circle-outline" size={40} color={colors.textTertiary} />
+                <Icon name="alert-circle-outline" size={40} color={colors.textTertiary} />
                 <Text style={{ color: colors.textSecondary, fontSize: 15, marginTop: 8 }}>{error}</Text>
                 <TouchableOpacity style={[styles.retryBtn, { backgroundColor: colors.primary }]} onPress={() => loadProducts(activeCategory || undefined)}>
                   <Text style={{ color: '#fff', fontWeight: '600' }}>Try again</Text>

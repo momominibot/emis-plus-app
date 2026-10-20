@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { getProfile, getPointsTransactions, addVoucher, generateReferralCode, saveProfile, applyReferral } from '@/lib/loyalty';
@@ -157,10 +157,10 @@ export default function AccountScreen() {
               onPress={item.action}
             >
               <View style={[styles.menuIcon, { backgroundColor: colors.primaryLight }]}>
-                <Ionicons name={item.icon as any} size={18} color={colors.primary} />
+                <Icon name={item.icon as any} size={18} color={colors.primary} />
               </View>
               <Text style={[styles.menuText, { color: colors.text }]}>{item.label}</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} />
+              <Icon name="chevron-forward" size={16} color={colors.textTertiary} />
             </TouchableOpacity>
           ))}
         </View>

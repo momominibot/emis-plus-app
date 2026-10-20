@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { getProfile, getVouchers } from '@/lib/loyalty';
@@ -68,7 +68,7 @@ export default function HomeScreen() {
           style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.borderStrong }]}
           onPress={() => router.push('/shop')}
         >
-          <Ionicons name="search" size={20} color={colors.textTertiary} />
+          <Icon name="search" size={20} color={colors.textTertiary} />
           <Text style={[styles.searchPlaceholder, { color: colors.textTertiary }]}>Search products...</Text>
         </TouchableOpacity>
 
@@ -79,7 +79,7 @@ export default function HomeScreen() {
             <Link key={need.id} href={`/shop`} asChild>
               <TouchableOpacity style={[styles.needTile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <View style={[styles.needIcon, { backgroundColor: colors.primaryLight }]}>
-                  <Ionicons name={need.icon as any} size={22} color={colors.primary} />
+                  <Icon name={need.icon as any} size={22} color={colors.primary} />
                 </View>
                 <Text style={[styles.needLabel, { color: colors.text }]}>{need.label}</Text>
               </TouchableOpacity>
@@ -91,7 +91,7 @@ export default function HomeScreen() {
         <Link href="/ai-assistant" asChild>
           <TouchableOpacity style={[styles.aiCard, { backgroundColor: colors.primaryLight }]}>
             <View style={[styles.aiIcon, { backgroundColor: colors.primary }]}>
-              <Ionicons name="chatbubble" size={22} color="#fff" />
+              <Icon name="chatbubble" size={22} color="#fff" />
             </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.aiTitle, { color: colors.primaryDark }]}>Not sure what to choose?</Text>
@@ -99,7 +99,7 @@ export default function HomeScreen() {
                 Ask our product assistant. Product help only, not medical advice.
               </Text>
             </View>
-            <Ionicons name="chevron-forward" size={20} color={colors.primary} />
+            <Icon name="chevron-forward" size={20} color={colors.primary} />
           </TouchableOpacity>
         </Link>
 
@@ -125,7 +125,7 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            <Icon name="chevron-forward" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         </Link>
 
@@ -171,7 +171,7 @@ export default function HomeScreen() {
 
         {/* Trust footer */}
         <View style={[styles.trustFooter, { backgroundColor: colors.surfaceSunken }]}>
-          <Ionicons name="shield-checkmark" size={16} color={colors.primary} />
+          <Icon name="shield-checkmark" size={16} color={colors.primary} />
           <Text style={[styles.trustText, { color: colors.textSecondary }]}>
             Authorised distributor. Singapore-based. GST-inclusive pricing.
           </Text>

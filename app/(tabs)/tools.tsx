@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 
@@ -40,7 +40,7 @@ export default function ToolsScreen() {
 
         {/* Privacy banner */}
         <View style={[styles.privacyBanner, { backgroundColor: colors.primaryLight }]}>
-          <Ionicons name="lock-closed" size={18} color={colors.primaryDark} />
+          <Icon name="lock-closed" size={18} color={colors.primaryDark} />
           <Text style={[styles.privacyText, { color: colors.primaryDark }]}>
             Your records stay on this phone. We never upload them.
           </Text>
@@ -54,13 +54,13 @@ export default function ToolsScreen() {
                 <Link key={tool.id} href={tool.route as any} asChild>
                   <TouchableOpacity style={[styles.toolRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                     <View style={[styles.toolIcon, { backgroundColor: colors.primaryLight }]}>
-                      <Ionicons name={tool.icon as any} size={24} color={colors.primary} />
+                      <Icon name={tool.icon as any} size={24} color={colors.primary} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.toolTitle, { color: colors.text }]}>{tool.title}</Text>
                       <Text style={[styles.toolDesc, { color: colors.textSecondary }]}>{tool.desc}</Text>
                     </View>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+                    <Icon name="chevron-forward" size={18} color={colors.textTertiary} />
                   </TouchableOpacity>
                 </Link>
               ))}
@@ -70,7 +70,7 @@ export default function ToolsScreen() {
 
         {/* Disclaimer */}
         <View style={[styles.disclaimer, { backgroundColor: colors.surfaceSunken }]}>
-          <Ionicons name="information-circle" size={16} color={colors.textSecondary} />
+          <Icon name="information-circle" size={16} color={colors.textSecondary} />
           <Text style={[styles.disclaimerText, { color: colors.textSecondary }]}>
             These tools are for personal record-keeping only. They do not provide medical diagnosis. Consult your doctor for medical advice.
           </Text>

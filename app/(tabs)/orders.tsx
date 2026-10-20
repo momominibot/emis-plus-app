@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Icon from '@/components/Icon';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { Order } from '@/lib/types';
@@ -92,7 +92,7 @@ export default function OrdersScreen() {
               <View style={styles.orderHeader}>
                 <Text style={[styles.orderNumber, { color: colors.text }]}>Order {order.orderNumber}</Text>
                 <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
-                  <Ionicons name={status.icon as any} size={12} color={status.color} />
+                  <Icon name={status.icon as any} size={12} color={status.color} />
                   <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
                 </View>
               </View>
@@ -124,7 +124,7 @@ export default function OrdersScreen() {
 
         {filtered.length === 0 && (
           <View style={styles.empty}>
-            <Ionicons name="cube-outline" size={48} color={colors.textTertiary} />
+            <Icon name="cube-outline" size={48} color={colors.textTertiary} />
             <Text style={{ color: colors.textSecondary, fontSize: 16, marginTop: 12 }}>No orders in this category</Text>
           </View>
         )}
