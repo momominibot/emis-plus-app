@@ -132,9 +132,10 @@ function adopt(stored: Session | null) {
 
 /**
  * Web: every write of the stored session (refresh, sign-in, sign-out,
- * expiry) runs under one cross-tab lock (Web Locks API) and re-reads storage
- * first, so no tab can write back an account another tab signed out of.
- * Token requests time out, so the lock is never held for long; sign-out
+ * expiry) runs under one cross-tab lock (Web Locks API). Refresh and expiry
+ * re-read storage inside it before writing, so no tab can write back an
+ * account another tab signed out of. The only network call made while
+ * holding the lock is the token request, which times out after 15 s; sign-out
  * also shows the signed-out state at once while it waits. Native has one JS
  * context and needs no lock.
  */
@@ -329,6 +330,8 @@ let refreshing: Promise<void> | null = null;
 const DEAD_GRANT = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'unsupported_grant_type']);
 
 async function refresh(s: Session): Promise<void> {
+  // Endpoints first, outside the lock: only the token request runs while other tabs wait.
+  const d = await getDiscovery();
   await withAuthLock(async () => {
     if (Platform.OS === 'web') {
       // Another tab may have refreshed, signed out or signed in meanwhile.
@@ -345,7 +348,6 @@ async function refresh(s: Session): Promise<void> {
       return;
     }
     try {
-      const d = await getDiscovery();
       const t = await tokenRequest(d.tokenEndpoint, { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: s.refreshToken });
       // Signing out does not wait for this lock; if the stored session changed
       // while the request was out, keep that change instead of writing ours.

@@ -92,11 +92,12 @@ nothing delivers them. Confirm or remove before launch.
   keeps its clawback until staff adjust it. Each refund is recorded as first reported; a later change to the same
   refund ID is not picked up (Shopify sends refunds/create once per refund).
 - Web stores tokens in `localStorage` (native uses the Keychain/Keystore). Any XSS on the web origin could read them.
-  Every write of the stored session (refresh, sign-in, sign-out, expiry) runs under one cross-tab Web Lock and
-  re-reads storage first, so one tab cannot write back an account another tab signed out of. Token requests,
-  including reading the response, time out after 15 seconds, so sign-out waits at most that long for a refresh in
-  another tab (the screen shows signed-out at once). Browsers without the Web Locks API (pre-2022) fall back to the
-  re-read alone, which narrows but does not close that race.
+  Every write of the stored session (refresh, sign-in, sign-out, expiry) runs under one cross-tab Web Lock; refresh
+  and expiry re-read storage inside it before writing, so one tab cannot write back an account another tab signed
+  out of. The only request made while holding the lock is the token request (15 second limit including the
+  response body; Shopify's endpoint discovery is fetched beforehand with its own 10 second limit), so sign-out waits
+  at most about 15 seconds for a refresh in another tab, and the screen shows signed-out at once. Browsers without
+  the Web Locks API (pre-2022) fall back to the re-read alone, which narrows but does not close that race.
 
 ## Tests
 

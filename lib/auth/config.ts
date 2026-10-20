@@ -44,19 +44,26 @@ export interface Discovery {
 
 let discovery: Promise<Discovery> | null = null;
 
+/** GET JSON with a 10 s limit on the whole request, body included. */
+async function getJson(url: string): Promise<any> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 10_000);
+  try {
+    const r = await fetch(url, { signal: abort.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Endpoints from Shopify's discovery documents (both send Access-Control-Allow-Origin: *). */
 export function getDiscovery(): Promise<Discovery> {
   if (!discovery) {
     discovery = (async () => {
       const [oidc, api] = await Promise.all([
-        fetch(STOREFRONT_ORIGIN + '/.well-known/openid-configuration').then((r) => {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        }),
-        fetch(STOREFRONT_ORIGIN + '/.well-known/customer-account-api').then((r) => {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        }),
+        getJson(STOREFRONT_ORIGIN + '/.well-known/openid-configuration'),
+        getJson(STOREFRONT_ORIGIN + '/.well-known/customer-account-api'),
       ]);
       const d: Discovery = {
         issuer: oidc.issuer,
