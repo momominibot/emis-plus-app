@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "emisapp",
+    "scheme": ["emisapp", "shop.61337632846.app"],
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,

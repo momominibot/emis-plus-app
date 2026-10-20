@@ -5,9 +5,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { getProfile, getVouchers } from '@/lib/loyalty';
+import { SIGN_IN_AVAILABLE } from '@/lib/auth/config';
+import { LOYALTY_AVAILABLE } from '@/lib/loyalty';
 import { getNewProducts } from '@/lib/shopify';
-import { MemberProfile, Product, Voucher, TIER_CONFIG } from '@/lib/types';
+import { useMembership } from '@/lib/useMembership';
+import { Product, TIER_CONFIG } from '@/lib/types';
 
 const SHOP_BY_NEED = [
   { id: 'wound', label: 'Wound Care', icon: 'bandage', handle: 'wound-care-supplies-singapore' },
@@ -20,8 +22,7 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme];
   const router = useRouter();
-  const [profile, setProfile] = useState<MemberProfile | null>(null);
-  const [vouchers, setVouchers] = useState<Voucher[]>([]);
+  const { session, membership } = useMembership();
   const [newProducts, setNewProducts] = useState<Product[]>([]);
 
   useEffect(() => {
@@ -29,18 +30,22 @@ export default function HomeScreen() {
   }, []);
 
   async function loadData() {
-    const [p, v] = await Promise.all([getProfile(), getVouchers()]);
-    setProfile(p);
-    setVouchers(v);
     try {
       const products = await getNewProducts(6);
       setNewProducts(products);
     } catch { /* Shopify not configured */ }
   }
 
-  const tier = profile ? TIER_CONFIG[profile.tier] : TIER_CONFIG.silver;
-  const nextTier = profile?.tier === 'silver' ? TIER_CONFIG.gold : profile?.tier === 'gold' ? TIER_CONFIG.diamond : null;
-  const progress = nextTier ? Math.min(100, ((profile?.totalSpent || 0) / nextTier.minSpend) * 100) : 100;
+  const firstName = session?.customer?.firstName || null;
+  const tier = TIER_CONFIG[membership?.tier ?? 'silver'];
+  const totalSpent = (membership?.totalSpentCents ?? 0) / 100;
+  const nextTier = membership?.tier === 'silver' ? TIER_CONFIG.gold : membership?.tier === 'gold' ? TIER_CONFIG.diamond : null;
+  const progress = nextTier ? Math.min(100, (totalSpent / nextTier.minSpend) * 100) : 100;
+  const rewardsHint = !SIGN_IN_AVAILABLE || !LOYALTY_AVAILABLE
+    ? 'Health Points launch soon with EMIS+ accounts.'
+    : !session
+      ? 'Sign in to collect Health Points on paid orders.'
+      : null;
   const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
   return (
@@ -53,12 +58,12 @@ export default function HomeScreen() {
               {new Date().toLocaleDateString('en-SG', { weekday: 'long', month: 'long', day: 'numeric' })}
             </Text>
             <Text style={[styles.greetingName, { color: colors.text }]}>
-              {greeting}, {profile?.name || 'there'}
+              {greeting}, {firstName || 'there'}
             </Text>
           </View>
           <View style={[styles.avatar, { backgroundColor: colors.primaryLight }]}>
             <Text style={[styles.avatarText, { color: colors.primaryDark }]}>
-              {profile?.name?.[0]?.toUpperCase() || 'G'}
+              {firstName?.[0]?.toUpperCase() || 'G'}
             </Text>
           </View>
         </View>
@@ -123,43 +128,38 @@ export default function HomeScreen() {
         <Link href="/account" asChild>
           <TouchableOpacity style={StyleSheet.flatten([styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={[styles.pointsValue, { color: colors.text }]}>{profile?.points ?? 0}</Text>
-                <Text style={[styles.pointsLabel, { color: colors.textSecondary }]}>Health Points</Text>
-                <View style={[styles.tierBadge, { backgroundColor: tier.color + '20' }]}>
-                  <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
-                </View>
-              </View>
-              {nextTier && (
-                <View style={{ marginTop: 8 }}>
-                  <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
-                    <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: colors.accent }]} />
+              {rewardsHint ? (
+                <>
+                  <Text style={[styles.aiTitle, { color: colors.text }]}>Health Points</Text>
+                  <Text style={[styles.aiSubtitle, { color: colors.textSecondary }]}>{rewardsHint}</Text>
+                </>
+              ) : (
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={[styles.pointsValue, { color: colors.text }]}>{membership ? membership.points : '-'}</Text>
+                    <Text style={[styles.pointsLabel, { color: colors.textSecondary }]}>Health Points</Text>
+                    {membership && (
+                      <View style={[styles.tierBadge, { backgroundColor: tier.color + '20' }]}>
+                        <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
+                      </View>
+                    )}
                   </View>
-                  <Text style={[styles.progressText, { color: colors.textSecondary }]}>
-                    S${(nextTier.minSpend - (profile?.totalSpent || 0)).toFixed(2)} to {nextTier.name}
-                  </Text>
-                </View>
+                  {membership && nextTier && (
+                    <View style={{ marginTop: 8 }}>
+                      <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                        <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: colors.accent }]} />
+                      </View>
+                      <Text style={[styles.progressText, { color: colors.textSecondary }]}>
+                        S${Math.max(nextTier.minSpend - totalSpent, 0).toFixed(2)} to {nextTier.name}
+                      </Text>
+                    </View>
+                  )}
+                </>
               )}
             </View>
             <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         </Link>
-
-        {/* Vouchers */}
-        {vouchers.length > 0 && (
-          <>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Your vouchers</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
-              {vouchers.map(v => (
-                <View key={v.id} style={[styles.voucherCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                  <Text style={[styles.voucherDiscount, { color: colors.accent }]}>{v.discount}</Text>
-                  <Text style={[styles.voucherTitle, { color: colors.text }]}>{v.title}</Text>
-                  <Text style={[styles.voucherCode, { color: colors.textTertiary }]}>{v.code}</Text>
-                </View>
-              ))}
-            </ScrollView>
-          </>
-        )}
 
         {/* New arrivals */}
         <Text style={[styles.sectionTitle, { color: colors.text }]}>New arrivals</Text>
@@ -224,10 +224,6 @@ const styles = StyleSheet.create({
   progressFill: { height: '100%', borderRadius: 3 },
   progressText: { fontSize: 12, marginTop: 4 },
   horizontalScroll: { paddingHorizontal: 20, gap: 12 },
-  voucherCard: { width: 180, borderRadius: 12, padding: 14, borderWidth: 1, borderStyle: 'dashed' },
-  voucherDiscount: { fontSize: 22, fontWeight: '800' },
-  voucherTitle: { fontSize: 13, fontWeight: '600', marginTop: 4 },
-  voucherCode: { fontSize: 11, marginTop: 6, fontFamily: 'monospace' },
   productCard: { width: 150, borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
   productImage: { width: '100%', height: 130, backgroundColor: '#fff' },
   productName: { fontSize: 13, fontWeight: '600', padding: 10, paddingBottom: 4, minHeight: 48 },

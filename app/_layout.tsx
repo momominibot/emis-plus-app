@@ -42,6 +42,7 @@ function RootLayoutNav() {
         <Stack.Screen name="tools/wound-nutrition" options={{ title: 'Wound Nutrition' }} />
         <Stack.Screen name="guide/[slug]" options={{ title: 'Guide' }} />
         <Stack.Screen name="orders" options={{ title: 'My Orders' }} />
+        <Stack.Screen name="auth/callback" options={{ title: 'Signing in', headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );

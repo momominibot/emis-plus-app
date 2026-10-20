@@ -1,0 +1,11 @@
+# Supabase CLI config for the EMIS+ loyalty backend (not yet linked to a
+# project; see docs/ACCOUNTS.md for the go-live steps).
+project_id = "emis-loyalty"
+
+# Both functions authenticate requests themselves: the webhook by Shopify's
+# HMAC, the API by checking the customer's token with Shopify.
+[functions.shopify-webhook]
+verify_jwt = false
+
+[functions.loyalty]
+verify_jwt = false

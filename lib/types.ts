@@ -24,38 +24,29 @@ export interface Collection {
   productCount?: number;
 }
 
-export interface Order {
-  id: string;
-  orderNumber: string;
-  date: string;
-  status: 'pending' | 'paid' | 'fulfilled' | 'shipped' | 'delivered' | 'cancelled';
-  trackingNumber?: string;
-  trackingCompany?: string;
-  total: string;
-  items: { title: string; quantity: number; image?: string }[];
-}
-
-export interface Voucher {
-  id: string;
-  code: string;
-  title: string;
-  discount: string;
-  expiresAt?: string;
-  used: boolean;
-}
-
 export type MemberTier = 'silver' | 'gold' | 'diamond';
 
-export interface MemberProfile {
-  name: string;
-  email: string;
-  phone?: string;
-  tier: MemberTier;
+/** One Health Points ledger entry from the loyalty service. */
+export interface LedgerEntry {
+  id: string;
+  date: string;
+  kind: 'order' | 'refund' | 'referral_welcome' | 'referral_reward' | 'referral_reversal';
   points: number;
-  totalSpent: number;
+  balanceAfter: number;
+  description: string;
+}
+
+/** The signed-in customer's membership, as returned by GET /loyalty/me. */
+export interface Membership {
+  customerId: string;
+  points: number;
+  tier: MemberTier;
+  totalSpentCents: number;
   referralCode: string;
-  referralCount: number;
-  joinedAt: string;
+  referralsCompleted: number;
+  referralsPending: number;
+  referredStatus: 'pending' | 'completed' | 'reversed' | null;
+  transactions: LedgerEntry[];
 }
 
 export interface TierPerk {
@@ -152,13 +143,4 @@ export interface CompressionMeasurement {
   thigh: number;
   length: number;
   recommended_size?: string;
-}
-
-export interface PointsTransaction {
-  id: string;
-  date: string;
-  type: 'earn' | 'burn' | 'referral' | 'bonus';
-  amount: number;
-  description: string;
-  balanceAfter: number;
 }

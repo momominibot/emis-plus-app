@@ -12,7 +12,8 @@ if [ -n "$(git status --porcelain -- app components lib constants assets app.jso
 fi
 
 rm -rf dist
-EXPO_NO_TELEMETRY=1 CI=1 npx expo export -p web --output-dir dist
+# --clear: EXPO_PUBLIC_* values are inlined at build time and Metro caches them.
+EXPO_NO_TELEMETRY=1 CI=1 npx expo export -p web --clear --output-dir dist
 cp dist/index.html dist/404.html   # GitHub Pages serves 404.html for deep links
 touch dist/.nojekyll               # keep folders that start with _ (Expo's _expo/)
 
