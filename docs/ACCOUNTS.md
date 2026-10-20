@@ -52,7 +52,8 @@ nothing delivers them. Confirm or remove before launch.
    - Mobile: callback `shop.61337632846.app://auth/callback` (scheme already added to `app.json`).
    - If Shopify needs separate web and mobile clients, use both client IDs (env vars below).
 2. **Supabase**: new project `emis-loyalty`, region `ap-southeast-1` (Singapore). Paid resource: confirm cost first.
-   - Apply `supabase/migrations/20261020120000_loyalty.sql`.
+   - Apply `supabase/migrations/20261020120000_loyalty.sql` as the `postgres` role (the role behind
+     `SUPABASE_DB_URL`, which the functions use). Dry run first: run it inside `begin; ... rollback;`.
    - Deploy `shopify-webhook` and `loyalty` with `verify_jwt = false` (they authenticate in code).
    - Secrets: `SHOPIFY_WEBHOOK_SECRET`, `LOYALTY_ALLOWED_ORIGINS=https://momominibot.github.io`.
      Optional: `SHOPIFY_SHOP_DOMAIN` (default `4a6920-67.myshopify.com`), `CUSTOMER_ACCOUNT_API_URL`, `ALLOW_TEST_ORDERS`.
