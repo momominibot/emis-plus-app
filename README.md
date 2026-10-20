@@ -5,7 +5,7 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 ## Features
 
 ### 5 Tabs
-1. **Home** - Health points balance, tier badge, vouchers, promotions carousel, new arrivals, AI assistant entry
+1. **Home** - Health Points balance and tier (when signed in), shop by need, new arrivals, AI assistant entry
 2. **Shop** - Category browsing, product search, product grid, synced to Shopify
 3. **Learn** - Six patient guides (wound healing, stoma care, nutrition and hydration), each with its clinical sources, plus the latest wound and stoma articles from the emis.asia blog
 4. **Tools** - Guided checks and local-only medical records (never uploaded):
@@ -19,24 +19,25 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
    - Intake & output chart
    - Vitals monitor (BP, HR, temp, SpO2, blood sugar, weight)
    - Export to doctor (CSV/summary) and device-to-device transfer
-5. **Account** - Member tier (Silver/Gold/Diamond), points history, referral code with sharing, vouchers, order history link (orders need sign-in, not connected yet)
+5. **Account** - Sign in with the customer's emis.asia account (Shopify Customer Account API), Health Points and tier, points history, referral code, order history
 
 ### AI Product Assistant
 - Chat-based product selection helper
 - Strict boundary: product recommendations only, never medical diagnosis
 - Quick prompts for common questions
 
-### Loyalty System
-- Silver (1x points), Gold (1.5x, $500 min), Diamond (2x, $2000 min)
-- Points earn on purchases, burn for vouchers
-- Referral code system - both parties get bonus points
-- Tier-specific perks
+### Accounts and Health Points
+- Sign-in: Shopify Customer Account API, public client with PKCE (`lib/auth/`)
+- Orders: read with the customer's own token (`lib/customer.ts`)
+- Health Points: Supabase ledger keyed to the Shopify customer ID, written only by HMAC-verified `orders/paid` and `refunds/create` webhooks (`supabase/`)
+- Silver (1x points), Gold (1.5x, S$500), Diamond (2x, S$2,000); referral bonus of 100 points each after the friend's first paid order
+- Not live yet: see [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for the rules, tests and go-live steps
 
 ## Tech Stack
 - **Frontend**: React Native + Expo SDK 57 + Expo Router (TypeScript)
 - **Commerce**: Shopify Storefront API with tokenless access (products, collections, search, blog articles). No API key in the app or backend; checkout happens on emis.asia
 - **Local Storage**: expo-sqlite (medical data, 100% on-device)
-- **Backend**: Vercel serverless functions (AI proxy, loyalty, Shopify webhooks)
+- **Backend**: Vercel serverless functions (AI proxy); Supabase edge functions + Postgres (Health Points, Shopify webhooks)
 - **AI**: Volcengine Ark (Doubao) via backend proxy
 
 ## Quick Start
@@ -54,6 +55,8 @@ npm run web        # Web preview
 Create `.env` in the app root (client-side only, no secrets):
 ```
 EXPO_PUBLIC_BACKEND_URL=https://your-backend.vercel.app
+EXPO_PUBLIC_SHOPIFY_CA_CLIENT_ID=<Customer Account API public client ID>   # sign-in hidden while unset
+EXPO_PUBLIC_LOYALTY_API_URL=https://<ref>.supabase.co/functions/v1/loyalty # points hidden while unset
 ```
 All Shopify and AI API keys live only on the backend (Vercel env vars). Never put secrets in `EXPO_PUBLIC_` variables.
 
@@ -75,15 +78,11 @@ vercel --prod
 Set environment variables in Vercel dashboard:
 - `SHOPIFY_ADMIN_TOKEN` - Shopify Admin API token (shpat_ prefix, server-side only)
 - `SHOP_DOMAIN` - Shopify store domain (e.g. 4a6920-67.myshopify.com)
-- `SHOPIFY_WEBHOOK_SECRET` - Webhook signing secret
 - `AI_API_KEY` - OpenRouter API key
 - `AI_BASE_URL` - OpenRouter base URL (https://openrouter.ai/api/v1)
 - `AI_MODEL` - AI model (e.g. openai/gpt-4o-mini)
 
-### Shopify Webhook Setup
-1. Go to Shopify Admin > Settings > Notifications > Webhooks
-2. Create webhook: Event = "Order payment", URL = `https://your-backend.vercel.app/api/webhooks/shopify`
-3. Copy the webhook secret to `SHOPIFY_WEBHOOK_SECRET`
+Shopify order webhooks now go to the Supabase `shopify-webhook` function, not Vercel: see [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
 
 ## App Store Submission
 
@@ -122,20 +121,21 @@ emis-app/
   lib/
     shopify.ts       # Shopify API client
     db.ts            # SQLite (medical data)
-    loyalty.ts       # Points, tiers, referral
+    auth/            # Customer Account API sign-in (PKCE), token storage
+    customer.ts      # The signed-in customer's orders
+    loyalty.ts       # Health Points API client
     ai.ts            # AI assistant
     export.ts        # CSV/export utilities
     types.ts         # TypeScript types
   backend/           # Vercel serverless functions
     api/
       ai/chat.ts
-      loyalty/points.ts
-      loyalty/referral.ts
-      webhooks/shopify.ts
+  supabase/          # Health Points: migration, edge functions, tests (run.sh)
 ```
 
 ## Privacy
 - Medical tool data (wound, ostomy, vitals, etc.) is stored ONLY in local SQLite on the device
 - No medical data is collected, uploaded, or synced to any server
 - Device-to-device transfer uses local file sharing (AirDrop/email/messaging)
-- Customer account data (points, orders) is managed via Shopify + backend
+- Sign-in tokens stay on the device (Keychain/Keystore on native, browser storage on web)
+- Health Points keep only the Shopify customer ID, order IDs and amounts (Supabase, Singapore region)
