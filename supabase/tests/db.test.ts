@@ -9,8 +9,30 @@ const wh = () => `wh-${Date.now()}-${seq++}`;
 function paid(t: TestDb, order: number | string, customer: number | string, cents: number, webhookId: string | null = wh()) {
   return t.db.recordPaidOrder({ webhookId, orderId: String(order), customerId: String(customer), orderName: `#${order}`, amountCents: cents });
 }
+/** Item refund: `cents` of refunded line items, the same money returned. */
 function refund(t: TestDb, refundId: number | string, order: number | string, cents: number, webhookId: string | null = wh()) {
-  return t.db.recordRefund({ webhookId, refundId: String(refundId), orderId: String(order), amountCents: cents });
+  return t.db.recordRefund({
+    webhookId, refundId: String(refundId), orderId: String(order),
+    lineCents: cents, lineTaxCents: 0, txCents: cents, txCurrency: null, otherCents: 0,
+  });
+}
+type RefundParts = { lineCents?: number; lineTaxCents?: number; txCents?: number; txCurrency?: string | null; otherCents?: number };
+function refundParts(t: TestDb, refundId: number, order: number, parts: RefundParts) {
+  return t.db.recordRefund({
+    webhookId: wh(), refundId: String(refundId), orderId: String(order),
+    lineCents: 0, lineTaxCents: 0, txCents: 0, txCurrency: null, otherCents: 0, ...parts,
+  });
+}
+/** What Shopify does with a 5xx: deliver again. */
+async function paidRetrying(t: TestDb, order: number, customer: number, cents: number) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await paid(t, order, customer, cents);
+    } catch (err) {
+      if (attempt < 5 && /referral changed while locking|deadlock/.test(String(err))) continue;
+      throw err;
+    }
+  }
 }
 // deno-lint-ignore no-explicit-any
 const member = async (t: TestDb, c: number | string) => (await t.db.getMember(String(c))) as any;
@@ -222,7 +244,7 @@ dbTest('a claim racing the first payment never leaves a stranded referral', asyn
   for (let i = 0; i < 12; i++) {
     const referee = 500 + i;
     const code = await codeOf(t, 1);
-    await Promise.all([t.db.claimReferral(String(referee), code, false), paid(t, 9000 + i, referee, 2000)]);
+    await Promise.all([t.db.claimReferral(String(referee), code, false), paidRetrying(t, 9000 + i, referee, 2000)]);
   }
   const [{ stranded }] = await t.sql`
     select count(*)::int as stranded from loyalty.referrals r
@@ -234,6 +256,73 @@ dbTest('a claim racing the first payment never leaves a stranded referral', asyn
 dbTest('concurrent first visits create one member with one code', async (t) => {
   const ms = await Promise.all(Array.from({ length: 20 }, () => member(t, 77)));
   assertEquals(new Set(ms.map((m) => m.referralCode)).size, 1);
+});
+
+// ------------------------------------------------- refund amounts (review)
+
+dbTest('a first order refunded in full before its payment arrives earns no referral bonus', async (t) => {
+  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await refund(t, 900, 10, 4000); // refund webhook overtakes orders/paid
+  const r = await paid(t, 10, 2, 4000);
+  assertEquals(r.referral, 'reversed');
+  assertEquals(await points(t, 1), 0);
+  assertEquals(await points(t, 2), 0);
+  assertEquals((await member(t, 2)).referredStatus, 'reversed');
+  await assertLedgerConsistent(t);
+});
+
+dbTest('amount-only refunds count, minus shipping, shipping tax and duties', async (t) => {
+  await paid(t, 10, 2, 10000); // 100 points
+  // S$30 returned, of which S$8 shipping and S$0.72 shipping tax: S$21.28 of goods.
+  assertEquals((await refundParts(t, 1, 10, { txCents: 3000, otherCents: 872 })).clawed_back, 22); // keeps floor(78.72)
+  // Shipping-only refund takes nothing.
+  assertEquals((await refundParts(t, 2, 10, { txCents: 500, otherCents: 500 })).clawed_back, 0);
+  const [r] = await t.sql`select amount_cents::int as a from loyalty.refunds where refund_id = 1`;
+  assertEquals(r.a, 2128);
+});
+
+dbTest('extra money returned on top of refunded items is clawed back too', async (t) => {
+  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await paid(t, 10, 2, 10000);
+  // S$20 of items plus an S$80 goodwill adjustment: the whole order was refunded.
+  await refundParts(t, 1, 10, { lineCents: 2000, txCents: 10000 });
+  assertEquals(await points(t, 2), 0);
+  assertEquals((await member(t, 2)).referredStatus, 'reversed');
+});
+
+dbTest('refunds paid in the customer currency convert at the order rate', async (t) => {
+  await t.db.recordPaidOrder({
+    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 13500,
+    presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
+  }); // S$135 = US$100 -> 135 points
+  assertEquals((await refundParts(t, 1, 10, { txCents: 4000, txCurrency: 'USD' })).clawed_back, 54); // US$40 = S$54
+  // A currency we cannot convert falls back to the refunded items' subtotal (none here).
+  assertEquals((await refundParts(t, 2, 10, { txCents: 4000, txCurrency: 'EUR' })).clawed_back, 0);
+});
+
+dbTest('tax-exclusive orders do not count item tax as merchandise', async (t) => {
+  await t.db.recordPaidOrder({
+    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000, taxesIncluded: false,
+  });
+  // Items S$50 + S$4.50 tax returned as one S$54.50 transaction.
+  assertEquals((await refundParts(t, 1, 10, { lineCents: 5000, lineTaxCents: 450, txCents: 5450 })).clawed_back, 50);
+});
+
+dbTest('a full refund racing repeated claims never deadlocks', async (t) => {
+  for (let i = 0; i < 10; i++) {
+    const referrer = 1000 + i * 2, referee = 1001 + i * 2;
+    const code = await codeOf(t, referrer);
+    await t.db.claimReferral(String(referee), code, false);
+    await paid(t, 7000 + i, referee, 3000);
+    const out = await Promise.all([
+      refund(t, 7500 + i, 7000 + i, 3000),
+      t.db.claimReferral(String(referee), code, false),
+      t.db.claimReferral(String(referee), code, false),
+    ]);
+    assertEquals(out[0].outcome, 'applied');
+    assertEquals((await member(t, referee)).referredStatus, 'reversed');
+  }
+  await assertLedgerConsistent(t);
 });
 
 // --------------------------------------------------------------- privileges

@@ -50,30 +50,40 @@ export type SignInResult = { ok: true } | { ok: false; message: string };
 let current: Session | null = null;
 let loaded: Promise<void> | null = null;
 let ready = false;
+// Bumped on every sign-in, sign-out and session change. Async work (refresh,
+// sign-in completion) only commits if the generation it started under is
+// still current, so a late response can never restore a signed-out account
+// or overwrite a different one.
+let generation = 0;
 const listeners = new Set<(s: Session | null) => void>();
 
 function emit() {
   for (const l of listeners) l(current);
 }
 
+async function readStored(): Promise<Session | null> {
+  try {
+    const [access, refresh, id, meta] = await Promise.all([
+      authStorage.get(KEYS.access),
+      authStorage.get(KEYS.refresh),
+      authStorage.get(KEYS.id),
+      authStorage.get(KEYS.meta),
+    ]);
+    if (!access || !id || !meta) return null;
+    const m = JSON.parse(meta);
+    return { accessToken: access, refreshToken: refresh, idToken: id, expiresAt: Number(m.expiresAt) || 0, customer: m.customer ?? null };
+  } catch {
+    return null;
+  }
+}
+
 export async function loadSession(): Promise<Session | null> {
   if (!loaded) {
     loaded = (async () => {
       if (!SIGN_IN_AVAILABLE) return;
-      try {
-        const [access, refresh, id, meta] = await Promise.all([
-          authStorage.get(KEYS.access),
-          authStorage.get(KEYS.refresh),
-          authStorage.get(KEYS.id),
-          authStorage.get(KEYS.meta),
-        ]);
-        if (access && id && meta) {
-          const m = JSON.parse(meta);
-          current = { accessToken: access, refreshToken: refresh, idToken: id, expiresAt: Number(m.expiresAt) || 0, customer: m.customer ?? null };
-        }
-      } catch {
-        current = null;
-      }
+      const gen = generation;
+      const stored = await readStored();
+      if (gen === generation) current = stored;
     })().finally(() => {
       ready = true;
     });
@@ -82,19 +92,50 @@ export async function loadSession(): Promise<Session | null> {
   return current;
 }
 
-async function persist(next: Session | null) {
+// Storage writes run one after another in the order the state changed, so
+// a sign-out can never be overtaken by an earlier, slower write.
+let writes: Promise<void> = Promise.resolve();
+
+function writeStored(next: Session | null): Promise<void> {
+  writes = writes
+    .catch(() => {})
+    .then(async () => {
+      if (next) {
+        await authStorage.set(KEYS.access, next.accessToken);
+        if (next.refreshToken) await authStorage.set(KEYS.refresh, next.refreshToken);
+        else await authStorage.remove(KEYS.refresh);
+        await authStorage.set(KEYS.id, next.idToken);
+        await authStorage.set(KEYS.meta, JSON.stringify({ expiresAt: next.expiresAt, customer: next.customer }));
+      } else {
+        for (const k of [KEYS.meta, KEYS.access, KEYS.refresh, KEYS.id]) await authStorage.remove(k);
+      }
+    });
+  return writes;
+}
+
+/** Replaces the session. With `ifGeneration`, only if nothing changed since that generation. */
+async function commit(next: Session | null, ifGeneration?: number): Promise<boolean> {
+  if (ifGeneration !== undefined && ifGeneration !== generation) return false;
+  generation++;
   current = next;
-  if (next) {
-    await Promise.all([
-      authStorage.set(KEYS.access, next.accessToken),
-      next.refreshToken ? authStorage.set(KEYS.refresh, next.refreshToken) : authStorage.remove(KEYS.refresh),
-      authStorage.set(KEYS.id, next.idToken),
-      authStorage.set(KEYS.meta, JSON.stringify({ expiresAt: next.expiresAt, customer: next.customer })),
-    ]);
-  } else {
-    await Promise.all([KEYS.access, KEYS.refresh, KEYS.id, KEYS.meta].map((k) => authStorage.remove(k)));
-  }
   emit();
+  await writeStored(next);
+  return true;
+}
+
+// Web: another tab signed in or out. Follow it instead of using stale tokens.
+if (Platform.OS === 'web' && typeof window !== 'undefined' && SIGN_IN_AVAILABLE) {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== null && !e.key.startsWith('emis.auth.')) return;
+    if (e.key === KEYS.pending) return;
+    generation++;
+    const gen = generation;
+    readStored().then((stored) => {
+      if (gen !== generation) return;
+      current = stored;
+      emit();
+    });
+  });
 }
 
 class TokenError extends Error {
@@ -118,8 +159,19 @@ async function tokenRequest(endpoint: string, fields: Record<string, string>): P
   return data;
 }
 
-/** Starts sign-in. On web the page navigates away and this never resolves to a result. */
-export async function signIn(): Promise<SignInResult | null> {
+let signingIn: Promise<SignInResult | null> | null = null;
+
+/**
+ * Starts sign-in. On web the page navigates away and this never resolves to
+ * a result. A second tap while one is open joins it instead of replacing the
+ * pending PKCE state.
+ */
+export function signIn(): Promise<SignInResult | null> {
+  if (!signingIn) signingIn = startSignIn().finally(() => (signingIn = null));
+  return signingIn;
+}
+
+async function startSignIn(): Promise<SignInResult | null> {
   if (!SIGN_IN_AVAILABLE) return { ok: false, message: 'Sign-in is not available yet.' };
   try {
     const d = await getDiscovery();
@@ -175,14 +227,17 @@ export function completeSignIn(params: RedirectParams): Promise<SignInResult> {
 }
 
 async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
+  const gen = generation;
   const raw = await authStorage.get(KEYS.pending);
-  await authStorage.remove(KEYS.pending); // one use only
   let pending: PendingSignIn | null = null;
   try {
     pending = raw ? JSON.parse(raw) : null;
   } catch {
     pending = null;
   }
+  // One use only, and only by the redirect it belongs to: a stray or old
+  // callback must not destroy a sign-in that is still in progress.
+  if (pending && params.state === pending.state) await authStorage.remove(KEYS.pending);
   try {
     const d = await getDiscovery();
     const check = checkRedirect(params, pending, d.issuer, Date.now());
@@ -205,7 +260,7 @@ async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
       expiresAt: Date.now() + t.expires_in * 1000,
       customer: await fetchCustomerSummary(d.graphqlApi, t.access_token).catch(() => null),
     };
-    await persist(session);
+    if (!(await commit(session, gen))) return { ok: false, message: 'Sign-in was interrupted. Please try again.' };
     completedState = params.state || null;
     return { ok: true };
   } catch (err) {
@@ -215,10 +270,14 @@ async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
 
 let refreshing: Promise<Session | null> | null = null;
 
+// OAuth errors that mean the refresh token itself is no longer valid.
+const DEAD_GRANT = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'unsupported_grant_type']);
+
 async function refresh(s: Session): Promise<Session | null> {
+  const gen = generation;
   if (!s.refreshToken) {
-    await persist(null);
-    return null;
+    await commit(null, gen);
+    return current;
   }
   try {
     const d = await getDiscovery();
@@ -230,14 +289,13 @@ async function refresh(s: Session): Promise<Session | null> {
       idToken: t.id_token ?? s.idToken,
       expiresAt: Date.now() + t.expires_in * 1000,
     };
-    await persist(next);
-    return next;
+    return (await commit(next, gen)) ? next : current;
   } catch (err) {
-    if (err instanceof TokenError && err.status >= 400 && err.status < 500) {
-      await persist(null); // refresh token rejected: signed out
-      return null;
+    if (err instanceof TokenError && (err.status === 400 || err.status === 401) && DEAD_GRANT.has(err.code ?? '')) {
+      await commit(null, gen); // refresh token rejected: signed out
+      return current;
     }
-    throw err; // offline: keep the session, the caller shows an error
+    throw err; // offline or throttled: keep the session, the caller shows an error
   }
 }
 
@@ -251,14 +309,14 @@ export async function getAccessToken(): Promise<string | null> {
   return next?.accessToken ?? null;
 }
 
-/** Called when Shopify rejects our token: drop it so the UI asks to sign in again. */
-export async function expireSession(): Promise<void> {
-  if (current) await persist(null);
+/** Called when Shopify rejects a token: sign out, unless the session has moved on since. */
+export async function expireSession(rejectedToken: string): Promise<void> {
+  if (current && current.accessToken === rejectedToken) await commit(null);
 }
 
 export async function signOut(): Promise<void> {
   const s = await loadSession();
-  await persist(null);
+  await commit(null);
   if (!s) return;
   try {
     const d = await getDiscovery();

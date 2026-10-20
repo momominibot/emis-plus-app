@@ -64,7 +64,16 @@ function shopMoney(set: unknown): { amount: unknown; currency: unknown } | null 
 }
 
 export type PaidOrderParse =
-  | { ok: true; orderId: string; customerId: string; orderName: string | null; amountCents: number }
+  | {
+      ok: true;
+      orderId: string;
+      customerId: string;
+      orderName: string | null;
+      amountCents: number;
+      presentmentCents: number | null;
+      presentmentCurrency: string | null;
+      taxesIncluded: boolean;
+    }
   | { ok: false; reason: string };
 
 const PAID_STATUSES = new Set(['paid', 'partially_refunded', 'refunded']);
@@ -86,13 +95,20 @@ export function parsePaidOrder(payload: unknown, opts: { currency: string; allow
   const subtotal = shopMoney(order.subtotal_price_set);
   if (!subtotal) return { ok: false, reason: 'invalid_payload' };
   if (subtotal.currency !== opts.currency) return { ok: false, reason: 'ignored_currency' };
+  const presentment = obj(obj(order.subtotal_price_set)?.presentment_money);
   try {
+    const presentmentCurrency =
+      typeof presentment?.currency_code === 'string' && /^[A-Z]{3}$/.test(presentment.currency_code) ? presentment.currency_code : null;
     return {
       ok: true,
       orderId: idFrom(order.admin_graphql_api_id ?? order.id, 'Order'),
       customerId: idFrom(customer.admin_graphql_api_id ?? customer.id, 'Customer'),
       orderName: typeof order.name === 'string' ? order.name.slice(0, 64) : null,
       amountCents: moneyToCents(subtotal.amount),
+      presentmentCents: presentmentCurrency ? moneyToCents(presentment!.amount) : null,
+      presentmentCurrency,
+      // Unknown counts as tax-inclusive (Singapore prices include GST), which claws back more, not less.
+      taxesIncluded: order.taxes_included !== false,
     };
   } catch {
     return { ok: false, reason: 'invalid_payload' };
@@ -100,54 +116,74 @@ export function parsePaidOrder(payload: unknown, opts: { currency: string; allow
 }
 
 export type RefundParse =
-  | { ok: true; refundId: string; orderId: string; amountCents: number }
+  | {
+      ok: true;
+      refundId: string;
+      orderId: string;
+      lineCents: number;
+      lineTaxCents: number;
+      txCents: number;
+      txCurrency: string | null;
+      otherCents: number;
+    }
   | { ok: false; reason: string };
 
 /**
- * refunds/create payload -> refunded merchandise in cents: the sum of the
- * refunded line items' subtotals. A refund with no line items (an amount
- * typed in by staff) uses its successful refund transactions minus any
- * refunded shipping, so a shipping-only refund takes no points back.
+ * refunds/create payload -> the parts the database needs to work out the
+ * refunded merchandise against its order (loyalty.refund_merchandise_cents):
+ * refunded items and their tax (shop money), money returned to the customer
+ * (successful or pending, in its own currency) and refunded shipping,
+ * shipping tax and duties (shop money).
  */
 export function parseRefund(payload: unknown, opts: { currency: string }): RefundParse {
   const refund = obj(payload);
   if (!refund) return { ok: false, reason: 'invalid_payload' };
+  const shopCents = (set: unknown): number => {
+    const money = shopMoney(set);
+    if (!money) return 0;
+    if (money.currency !== opts.currency) throw new CurrencyError();
+    return moneyToCents(String(money.amount).replace(/^-/, ''));
+  };
   try {
     const refundId = idFrom(refund.admin_graphql_api_id ?? refund.id, 'Refund');
     const orderId = idFrom(refund.order_id, 'Order');
-    let cents = 0;
-    const lines = Array.isArray(refund.refund_line_items) ? refund.refund_line_items : [];
-    for (const line of lines) {
-      const money = shopMoney(obj(line)?.subtotal_set);
-      if (!money) throw new Error('line without subtotal');
-      if (money.currency !== opts.currency) return { ok: false, reason: 'ignored_currency' };
-      cents += moneyToCents(money.amount);
+
+    let lineCents = 0;
+    let lineTaxCents = 0;
+    for (const raw of Array.isArray(refund.refund_line_items) ? refund.refund_line_items : []) {
+      const line = obj(raw);
+      if (!line || !shopMoney(line.subtotal_set)) throw new Error('line without subtotal');
+      lineCents += shopCents(line.subtotal_set);
+      lineTaxCents += shopCents(line.total_tax_set);
     }
-    if (lines.length === 0) {
-      const txs = Array.isArray(refund.transactions) ? refund.transactions : [];
-      for (const raw of txs) {
-        const tx = obj(raw);
-        if (!tx || tx.kind !== 'refund' || tx.status !== 'success') continue;
-        if (tx.currency != null && tx.currency !== opts.currency) return { ok: false, reason: 'ignored_currency' };
-        cents += moneyToCents(tx.amount);
-      }
-      let shipping = 0;
-      const shippingLines = Array.isArray(refund.refund_shipping_lines) ? refund.refund_shipping_lines : [];
-      for (const line of shippingLines) {
-        const money = shopMoney(obj(line)?.subtotal_amount_set);
-        if (money) shipping += moneyToCents(money.amount);
-      }
-      // Before API 2024-10 refunded shipping came as an order adjustment.
-      const adjustments = Array.isArray(refund.order_adjustments) ? refund.order_adjustments : [];
-      for (const raw of adjustments) {
-        const adj = obj(raw);
-        const money = adj && adj.kind === 'shipping_refund' ? shopMoney(adj.amount_set) : null;
-        if (money) shipping += moneyToCents(String(money.amount).replace(/^-/, ''));
-      }
-      cents = Math.max(cents - shipping, 0);
+
+    let txCents = 0;
+    let txCurrency: string | null = null;
+    for (const raw of Array.isArray(refund.transactions) ? refund.transactions : []) {
+      const tx = obj(raw);
+      if (!tx || tx.kind !== 'refund' || (tx.status !== 'success' && tx.status !== 'pending')) continue;
+      const currency = typeof tx.currency === 'string' && tx.currency !== opts.currency ? tx.currency : null;
+      if (currency !== null && !/^[A-Z]{3}$/.test(currency)) throw new Error('bad currency');
+      if (txCents > 0 && currency !== txCurrency) throw new Error('mixed refund currencies');
+      txCurrency = currency;
+      txCents += moneyToCents(tx.amount);
     }
-    return { ok: true, refundId, orderId, amountCents: cents };
-  } catch {
-    return { ok: false, reason: 'invalid_payload' };
+
+    let otherCents = shopCents(refund.total_duties_set);
+    for (const raw of Array.isArray(refund.refund_shipping_lines) ? refund.refund_shipping_lines : []) {
+      const line = obj(raw);
+      otherCents += shopCents(line?.subtotal_amount_set) + shopCents(line?.tax_amount_set);
+    }
+    // Before API 2024-10 refunded shipping came as an order adjustment.
+    for (const raw of Array.isArray(refund.order_adjustments) ? refund.order_adjustments : []) {
+      const adj = obj(raw);
+      if (adj?.kind === 'shipping_refund') otherCents += shopCents(adj.amount_set) + shopCents(adj.tax_amount_set);
+    }
+
+    return { ok: true, refundId, orderId, lineCents, lineTaxCents, txCents, txCurrency, otherCents };
+  } catch (err) {
+    return { ok: false, reason: err instanceof CurrencyError ? 'ignored_currency' : 'invalid_payload' };
   }
 }
+
+class CurrencyError extends Error {}

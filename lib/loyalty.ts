@@ -21,7 +21,7 @@ async function call(path: string, init: RequestInit = {}): Promise<Response> {
     headers: { ...(init.headers as Record<string, string>), Authorization: 'Bearer ' + token },
   });
   if (res.status === 401) {
-    await expireSession();
+    await expireSession(token);
     throw new NotSignedInError();
   }
   return res;

@@ -37,6 +37,11 @@ create table loyalty.orders (
   customer_id    bigint not null references loyalty.members,
   order_name     text,
   amount_cents   bigint not null check (amount_cents >= 0),
+  -- Same subtotal in the currency the customer paid in, to convert refunds
+  -- whose transactions are in that currency.
+  presentment_cents    bigint check (presentment_cents >= 0),
+  presentment_currency text check (presentment_currency ~ '^[A-Z]{3}$'),
+  taxes_included boolean not null default true,
   multiplier_x10 integer not null check (multiplier_x10 in (10, 15, 20)),
   points_earned  integer not null check (points_earned >= 0),
   refunded_cents bigint not null default 0,
@@ -47,14 +52,21 @@ create table loyalty.orders (
 );
 create index orders_customer_idx on loyalty.orders (customer_id);
 
--- Refunds are stored even when their order has not been awarded yet
--- (webhook order is not guaranteed); record_paid_order applies them later.
+-- Refunds are stored as Shopify reported them, even before their order has
+-- been awarded (webhook order is not guaranteed); record_paid_order applies
+-- them later. The merchandise amount is worked out against the order when
+-- applied (see refund_merchandise_cents) and kept in amount_cents.
 create table loyalty.refunds (
-  refund_id    bigint primary key check (refund_id > 0),
-  order_id     bigint not null check (order_id > 0),
-  amount_cents bigint not null check (amount_cents >= 0),
-  applied      boolean not null default false,
-  created_at   timestamptz not null default now()
+  refund_id      bigint primary key check (refund_id > 0),
+  order_id       bigint not null check (order_id > 0),
+  line_cents     bigint not null default 0 check (line_cents >= 0),     -- refunded items' subtotals, shop money
+  line_tax_cents bigint not null default 0 check (line_tax_cents >= 0), -- their tax, shop money
+  tx_cents       bigint not null default 0 check (tx_cents >= 0),       -- money returned (successful or pending)
+  tx_currency    text check (tx_currency ~ '^[A-Z]{3}$'),               -- null: shop currency
+  other_cents    bigint not null default 0 check (other_cents >= 0),    -- shipping, shipping tax, duties
+  amount_cents   bigint check (amount_cents >= 0),
+  applied        boolean not null default false,
+  created_at     timestamptz not null default now()
 );
 create index refunds_pending_idx on loyalty.refunds (order_id) where not applied;
 
@@ -200,6 +212,29 @@ begin
 end
 $$;
 
+-- Merchandise refunded: the larger of the refunded items' subtotal and the
+-- money returned minus shipping, duties and (for tax-exclusive prices) the
+-- items' tax. Covers item refunds, amount-only refunds and refunds where
+-- staff returned more than the items. Money returned in the customer's
+-- currency is converted with the order's own exchange ratio; an unknown
+-- currency falls back to the items' subtotal.
+create function loyalty.refund_merchandise_cents(r loyalty.refunds, o loyalty.orders) returns bigint
+language sql immutable set search_path = '' as $$
+  select greatest(
+    r.line_cents,
+    coalesce(
+      case
+        when r.tx_cents = 0 then 0
+        when r.tx_currency is null then r.tx_cents
+        when r.tx_currency = o.presentment_currency and o.presentment_cents > 0
+          then round(r.tx_cents::numeric * o.amount_cents / o.presentment_cents)::bigint
+      end
+      - r.other_cents
+      - case when o.taxes_included then 0 else r.line_tax_cents end,
+      0),
+    0)
+$$;
+
 -- Applies one stored refund to its awarded order. Caller holds lock_order
 -- and the member row lock. Returns points clawed back, or null when the
 -- order has not been awarded yet (refund stays pending).
@@ -209,6 +244,7 @@ declare
   r loyalty.refunds;
   o loyalty.orders;
   ref loyalty.referrals;
+  v_amount bigint;
   v_refunded bigint;
   v_target integer;
   v_claw integer;
@@ -222,7 +258,8 @@ begin
     return null;
   end if;
 
-  v_refunded := least(o.refunded_cents + r.amount_cents, o.amount_cents);
+  v_amount := loyalty.refund_merchandise_cents(r, o);
+  v_refunded := least(o.refunded_cents + v_amount, o.amount_cents);
   -- Clawback so far should equal what the refunded part earned, computed on
   -- the running total so repeated partial refunds never drift.
   v_target := o.points_earned - ((o.amount_cents - v_refunded) * o.multiplier_x10 / 1000)::integer;
@@ -254,7 +291,7 @@ begin
         'Referral bonus reversed: friend''s first order refunded', o.order_id, r.refund_id, ref.id);
     end if;
   end if;
-  update loyalty.refunds set applied = true where refund_id = r.refund_id;
+  update loyalty.refunds set applied = true, amount_cents = v_amount where refund_id = r.refund_id;
   return v_claw;
 end
 $$;
@@ -262,7 +299,8 @@ $$;
 -- --------------------------------------------------------------- entry points
 
 create function loyalty.record_paid_order(
-  p_webhook_id text, p_order_id bigint, p_customer_id bigint, p_order_name text, p_amount_cents bigint
+  p_webhook_id text, p_order_id bigint, p_customer_id bigint, p_order_name text, p_amount_cents bigint,
+  p_presentment_cents bigint default null, p_presentment_currency text default null, p_taxes_included boolean default true
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
@@ -307,14 +345,35 @@ begin
     v_mult := loyalty.multiplier_x10(v_spent);
     v_points := (p_amount_cents * v_mult / 1000)::integer;
 
-    insert into loyalty.orders (order_id, customer_id, order_name, amount_cents, multiplier_x10, points_earned)
-    values (p_order_id, p_customer_id, p_order_name, p_amount_cents, v_mult, v_points);
+    insert into loyalty.orders (order_id, customer_id, order_name, amount_cents, multiplier_x10, points_earned,
+                                presentment_cents, presentment_currency, taxes_included)
+    values (p_order_id, p_customer_id, p_order_name, p_amount_cents, v_mult, v_points,
+            p_presentment_cents, p_presentment_currency, coalesce(p_taxes_included, true));
     update loyalty.members
        set total_spent_cents = total_spent_cents + p_amount_cents, updated_at = now()
      where customer_id = p_customer_id;
     if v_points > 0 then
       perform loyalty.add_points(p_customer_id, 'order', v_points,
         'Order ' || coalesce(p_order_name, '#' || p_order_id::text), p_order_id, null, null);
+    end if;
+
+    -- First paid order completes a pending referral (never a free order).
+    -- Done before applying early refunds, so a first order that was already
+    -- refunded in full completes and is then reversed like any other.
+    select * into ref from loyalty.referrals
+      where referee_id = p_customer_id and status = 'pending' for update;
+    if found and p_amount_cents > 0 then
+      if v_referrer is distinct from ref.referrer_id then
+        -- Claimed between our lookup and our lock: retry with the right lock order.
+        raise exception 'referral changed while locking' using errcode = '40001';
+      end if;
+      update loyalty.referrals
+         set status = 'completed', qualifying_order_id = p_order_id, completed_at = now()
+       where id = ref.id;
+      perform loyalty.add_points(p_customer_id, 'referral_welcome', 100,
+        'Welcome bonus: referred by a friend', p_order_id, null, ref.id);
+      perform loyalty.add_points(ref.referrer_id, 'referral_reward', 100,
+        'Referral bonus: a friend placed their first order', p_order_id, null, ref.id);
     end if;
 
     -- Refunds that arrived before this award.
@@ -324,23 +383,8 @@ begin
       perform loyalty.apply_refund(v_refund.refund_id);
     end loop;
 
-    -- First paid order completes a pending referral (never a free order).
-    select * into ref from loyalty.referrals
-      where referee_id = p_customer_id and status = 'pending' for update;
-    if found and p_amount_cents > 0 then
-      if v_referrer is distinct from ref.referrer_id then
-        -- Claimed between our lookup and our lock: take the referrer lock now.
-        perform 1 from loyalty.members where customer_id = ref.referrer_id for update;
-      end if;
-      update loyalty.referrals
-         set status = 'completed', qualifying_order_id = p_order_id, completed_at = now()
-       where id = ref.id;
-      perform loyalty.add_points(p_customer_id, 'referral_welcome', 100,
-        'Welcome bonus: referred by a friend', p_order_id, null, ref.id);
-      perform loyalty.add_points(ref.referrer_id, 'referral_reward', 100,
-        'Referral bonus: a friend placed their first order', p_order_id, null, ref.id);
-      v_referral := 'completed';
-    end if;
+    select status into v_referral from loyalty.referrals
+      where referee_id = p_customer_id and qualifying_order_id = p_order_id;
 
     select points into strict v_balance from loyalty.members where customer_id = p_customer_id;
     v_result := jsonb_build_object(
@@ -355,17 +399,18 @@ end
 $$;
 
 create function loyalty.record_refund(
-  p_webhook_id text, p_refund_id bigint, p_order_id bigint, p_amount_cents bigint
+  p_webhook_id text, p_refund_id bigint, p_order_id bigint,
+  p_line_cents bigint, p_line_tax_cents bigint, p_tx_cents bigint, p_tx_currency text, p_other_cents bigint
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   v_customer bigint;
+  v_referrer bigint;
   v_claw integer;
   v_result jsonb;
 begin
   if p_refund_id is null or p_refund_id <= 0 then raise exception 'invalid refund id'; end if;
   if p_order_id is null or p_order_id <= 0 then raise exception 'invalid order id'; end if;
-  if p_amount_cents is null or p_amount_cents < 0 then raise exception 'invalid amount'; end if;
 
   perform loyalty.lock_order(p_order_id);
 
@@ -378,15 +423,22 @@ begin
     end if;
   end if;
 
-  insert into loyalty.refunds (refund_id, order_id, amount_cents)
-  values (p_refund_id, p_order_id, p_amount_cents)
+  insert into loyalty.refunds (refund_id, order_id, line_cents, line_tax_cents, tx_cents, tx_currency, other_cents)
+  values (p_refund_id, p_order_id, coalesce(p_line_cents, 0), coalesce(p_line_tax_cents, 0),
+          coalesce(p_tx_cents, 0), p_tx_currency, coalesce(p_other_cents, 0))
   on conflict (refund_id) do nothing;
 
   select customer_id into v_customer from loyalty.orders where order_id = p_order_id;
   if not found then
     v_result := jsonb_build_object('outcome', 'stored_until_order_awarded');
   else
-    perform 1 from loyalty.members where customer_id = v_customer for update;
+    -- Lock the customer and, if this order earned a referral, the referrer,
+    -- in id order like every other path.
+    select referrer_id into v_referrer from loyalty.referrals
+      where qualifying_order_id = p_order_id and status = 'completed';
+    perform 1 from loyalty.members
+      where customer_id in (v_customer, v_referrer)
+      order by customer_id for update;
     v_claw := loyalty.apply_refund(p_refund_id);
     v_result := jsonb_build_object('outcome', 'applied', 'clawed_back', v_claw);
   end if;
@@ -442,7 +494,10 @@ language plpgsql volatile set search_path = '' as $$
 declare
   m loyalty.members;
 begin
-  m := loyalty.ensure_member(p_customer_id);
+  perform loyalty.ensure_member(p_customer_id);
+  -- Hold the member row so no award or claim commits while we read the
+  -- balance, history and referral counts.
+  select * into strict m from loyalty.members where customer_id = p_customer_id for share;
   return jsonb_build_object(
     'customerId', m.customer_id::text,
     'points', m.points,

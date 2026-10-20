@@ -21,13 +21,16 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
     async recordPaidOrder(o) {
       const [row] = await sql`
         select loyalty.record_paid_order(${o.webhookId}, ${o.orderId}::bigint, ${o.customerId}::bigint,
-                                         ${o.orderName}, ${o.amountCents}::bigint) as r`;
+                                         ${o.orderName}, ${o.amountCents}::bigint,
+                                         ${o.presentmentCents ?? null}::bigint, ${o.presentmentCurrency ?? null},
+                                         ${o.taxesIncluded ?? true}) as r`;
       return row.r;
     },
     async recordRefund(r) {
       const [row] = await sql`
         select loyalty.record_refund(${r.webhookId}, ${r.refundId}::bigint, ${r.orderId}::bigint,
-                                     ${r.amountCents}::bigint) as r`;
+                                     ${r.lineCents}::bigint, ${r.lineTaxCents}::bigint, ${r.txCents}::bigint,
+                                     ${r.txCurrency}, ${r.otherCents}::bigint) as r`;
       return row.r;
     },
     async getMember(customerId) {

@@ -133,15 +133,26 @@ class FakeShopify:
                     "id": "gid://shopify/Customer/7012345678901", "firstName": "Pat",
                     "emailAddress": {"emailAddress": "pat@example.com"}}}}, headers=CORS)
             if "EmisOrders" in query:
-                return route.fulfill(json={"data": {"customer": {"orders": {"nodes": [{
-                    "id": "gid://shopify/Order/1", "name": "#1042", "processedAt": "2026-10-01T03:00:00Z",
-                    "financialStatus": "PAID", "fulfillmentStatus": "FULFILLED", "cancelledAt": None,
-                    "statusPageUrl": "https://www.emis.asia/orders/status",
-                    "totalPrice": {"amount": "123.45", "currencyCode": "SGD"},
-                    "lineItems": {"nodes": [{"title": "Foam dressing 10x10", "quantity": 2, "image": None}]},
-                    "fulfillments": {"nodes": [{"latestShipmentStatus": "DELIVERED",
-                                                "trackingInformation": [{"number": "SG1", "company": "Ninja Van", "url": "https://track.test/SG1"}]}]},
-                }]}}}}, headers=CORS)
+                variables = json.loads(req.post_data).get("variables") or {}
+                def order(num, shipments, tracking, status="FULFILLED"):
+                    return {
+                        "id": "gid://shopify/Order/" + num, "name": "#" + num, "processedAt": "2026-10-01T03:00:00Z",
+                        "financialStatus": "PAID", "fulfillmentStatus": status, "cancelledAt": None,
+                        "statusPageUrl": "https://www.emis.asia/orders/status",
+                        "totalPrice": {"amount": "123.45", "currencyCode": "SGD"},
+                        "lineItems": {"nodes": [{"title": "Foam dressing 10x10", "quantity": 2, "image": None}]},
+                        "fulfillments": {"nodes": [
+                            {"latestShipmentStatus": st, "trackingInformation": [{"number": t, "company": "Ninja Van", "url": "https://track.test/" + t}]}
+                            for st, t in zip(shipments, tracking)]},
+                    }
+                if variables.get("after") == "cursor-1":
+                    page = {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [order("1001", ["DELIVERED"], ["SG0"])]}
+                else:
+                    page = {"pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"}, "nodes": [
+                        order("1042", ["DELIVERED"], ["SG1"]),
+                        order("1043", ["DELIVERED", "IN_TRANSIT"], ["SG2", "SG3"]),
+                    ]}
+                return route.fulfill(json={"data": {"customer": {"orders": page}}}, headers=CORS)
             return route.fulfill(status=400, json={"errors": [{"message": "unknown query"}]}, headers=CORS)
         if req.url.startswith(LOYALTY):
             self.loyalty_calls.append((req.method, url.path, req.headers.get("authorization")))
@@ -223,9 +234,13 @@ def run(web_test, web_plain):
 
         page.goto(origin + BASE + "/orders")
         page.get_by_text("#1042").wait_for()
-        check(page.get_by_text("Delivered").count() > 0, "orders show shipment status")
+        check(page.get_by_text("Delivered", exact=True).count() == 1, "a fully delivered order says Delivered")
+        check(page.get_by_text("Partly delivered", exact=True).count() == 1, "two parcels, one on the way: Partly delivered")
+        check(page.get_by_text("Track parcel 2").count() == 1, "each parcel has its own tracking button")
         check(page.get_by_text("S$123.45", exact=False).count() > 0, "orders show the Shopify total")
-        check(page.get_by_text("Track parcel").count() > 0, "orders offer tracking")
+        page.get_by_text("Show older orders").click()
+        page.get_by_text("#1001").wait_for()
+        check(page.get_by_text("Show older orders").count() == 0, "older orders load page by page until the end")
         shot(page, "orders-signed-in")
 
         # Replaying the callback (code already used, pending consumed) must not sign anyone in again.
@@ -234,6 +249,9 @@ def run(web_test, web_plain):
         check(len([c for c in fake.token_calls if c.get("grant_type") == "authorization_code"]) == 1, "replayed callback makes no token request")
 
         page.goto(origin + BASE + "/account")
+        other = ctx.new_page()  # a second tab, signed in through shared storage
+        other.goto(origin + BASE + "/account")
+        other.get_by_text("Your referral code").wait_for()
         # Local sign-out first, then the browser visits Shopify's logout, which redirects back.
         with page.expect_event("load", timeout=15000):
             with page.expect_request(lambda r: "/logout" in r.url, timeout=15000):
@@ -241,6 +259,9 @@ def run(web_test, web_plain):
         page.get_by_text("Sign in to EMIS+").wait_for(timeout=15000)
         check(fake.logged_out, "sign-out calls Shopify logout with the id_token")
         check(page.evaluate("() => localStorage.getItem('emis.auth.access')") is None, "sign-out clears stored tokens")
+        other.get_by_text("Sign in to EMIS+").wait_for(timeout=10000)
+        check(other.get_by_text("ABCD2345").count() == 0, "the other tab follows the sign-out and hides the old account")
+        other.close()
 
         page.goto(origin + BASE + "/")
         page.get_by_text("Sign in to collect Health Points on paid orders.").wait_for()

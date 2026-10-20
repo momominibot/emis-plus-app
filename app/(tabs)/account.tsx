@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { SIGN_IN_AVAILABLE } from '@/lib/auth/config';
 import { signIn, signOut } from '@/lib/auth/session';
 import { LOYALTY_AVAILABLE, claimReferral } from '@/lib/loyalty';
 import { STORE_URL } from '@/lib/shopify';
-import { useMembership } from '@/lib/useMembership';
+import { sessionKey, useMembership } from '@/lib/useMembership';
 import { TIER_CONFIG } from '@/lib/types';
 
 export default function AccountScreen() {
@@ -25,6 +25,14 @@ export default function AccountScreen() {
   const [claiming, setClaiming] = useState(false);
   // Inline feedback: Alert.alert does nothing in the web build.
   const [referralMsg, setReferralMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // A different account (or signing out) starts the referral form afresh.
+  const key = sessionKey(session);
+  useEffect(() => {
+    setReferralMsg(null);
+    setReferralInput('');
+    setShowReferralInput(false);
+  }, [key]);
 
   const customer = session?.customer;
   const displayName = customer?.firstName || (session ? 'EMIS+ member' : 'Guest');

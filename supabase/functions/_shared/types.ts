@@ -7,13 +7,21 @@ export interface PaidOrderInput {
   customerId: string;
   orderName: string | null;
   amountCents: number;
+  presentmentCents?: number | null;
+  presentmentCurrency?: string | null;
+  taxesIncluded?: boolean;
 }
 
 export interface RefundInput {
   webhookId: string | null;
   refundId: string;
   orderId: string;
-  amountCents: number;
+  lineCents: number;
+  lineTaxCents: number;
+  txCents: number;
+  /** null means the shop currency */
+  txCurrency: string | null;
+  otherCents: number;
 }
 
 export type ReferralOutcome =

@@ -2,7 +2,7 @@
 // Without sign-in (or before it is configured) the screen points to the
 // customer's emis.asia account instead of showing placeholder orders.
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -14,6 +14,7 @@ import { STORE_URL } from '@/lib/shopify';
 import { SIGN_IN_AVAILABLE } from '@/lib/auth/config';
 import { signIn, useSession } from '@/lib/auth/session';
 import { type CustomerOrder, NotSignedInError, fetchOrders, orderStatusLabel } from '@/lib/customer';
+import { sessionKey } from '@/lib/useMembership';
 
 function money(m: { amount: string; currencyCode: string }) {
   const n = Number(m.amount);
@@ -25,28 +26,51 @@ export default function OrdersScreen() {
   const colors = Colors[useColorScheme()];
   const router = useRouter();
   const { session, ready } = useSession();
-  const [orders, setOrders] = useState<CustomerOrder[] | null>(null);
+  const key = sessionKey(session);
+  const keyRef = useRef(key);
+  // Results are stored with the account they belong to and only shown for it.
+  const [result, setResult] = useState<{ owner: string; orders: CustomerOrder[]; nextCursor: string | null } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ owner: string; message: string } | null>(null);
+  const mine = key !== null && result?.owner === key ? result : null;
+  const orders = mine ? mine.orders : null;
+  const nextCursor = mine ? mine.nextCursor : null;
+  const [signingIn, setSigningIn] = useState(false);
   const [signInMsg, setSignInMsg] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!session) return;
+  useEffect(() => {
+    keyRef.current = key;
+  }, [key]);
+
+  const load = useCallback(async (more = false) => {
+    if (!key) return;
+    const askedFor = key;
     setLoading(true);
     try {
-      setOrders(await fetchOrders());
+      const page = await fetchOrders(more ? nextCursor : null);
+      if (keyRef.current !== askedFor) return; // signed out or switched while loading
+      setResult((prev) => ({
+        owner: askedFor,
+        orders: more && prev?.owner === askedFor ? [...prev.orders, ...page.orders] : page.orders,
+        nextCursor: page.nextCursor,
+      }));
       setError(null);
     } catch (err) {
-      if (!(err instanceof NotSignedInError)) setError(err instanceof Error ? err.message : 'Could not load your orders.');
+      if (keyRef.current !== askedFor) return;
+      if (!(err instanceof NotSignedInError)) {
+        setError({ owner: askedFor, message: err instanceof Error ? err.message : 'Could not load your orders.' });
+      }
     } finally {
       setLoading(false);
     }
-  }, [session]);
+  }, [key, nextCursor]);
 
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load]),
+      // Reload on focus and on account change only, not when the cursor moves.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [key]),
   );
 
   if (!ready) {
@@ -67,13 +91,17 @@ export default function OrdersScreen() {
                 Sign in with your emis.asia account to see your orders and delivery updates here.
               </Text>
               <TouchableOpacity
-                style={[styles.btn, { backgroundColor: colors.primary }]}
+                style={[styles.btn, { backgroundColor: colors.primary, opacity: signingIn ? 0.6 : 1 }]}
+                disabled={signingIn}
                 onPress={async () => {
+                  setSigningIn(true);
+                  setSignInMsg(null);
                   const r = await signIn();
+                  setSigningIn(false);
                   if (r && !r.ok) setSignInMsg(r.message);
                 }}
               >
-                <Text style={styles.btnText}>Sign in with emis.asia</Text>
+                <Text style={styles.btnText}>{signingIn ? 'Opening sign-in...' : 'Sign in with emis.asia'}</Text>
               </TouchableOpacity>
               {signInMsg && <Text style={[styles.body, { color: colors.danger }]}>{signInMsg}</Text>}
             </>
@@ -100,11 +128,11 @@ export default function OrdersScreen() {
         data={orders || []}
         keyExtractor={(o) => o.id}
         contentContainerStyle={{ padding: 16, gap: 12 }}
-        refreshControl={<RefreshControl refreshing={loading && orders !== null} onRefresh={load} tintColor={colors.primary} />}
+        refreshControl={<RefreshControl refreshing={loading && orders !== null} onRefresh={() => load()} tintColor={colors.primary} />}
         ListHeaderComponent={
-          error ? (
-            <TouchableOpacity onPress={load}>
-              <Text style={[styles.body, { color: colors.danger, textAlign: 'left' }]}>{error} Tap to retry.</Text>
+          error && error.owner === key ? (
+            <TouchableOpacity onPress={() => load()}>
+              <Text style={[styles.body, { color: colors.danger, textAlign: 'left' }]}>{error.message} Tap to retry.</Text>
             </TouchableOpacity>
           ) : null
         }
@@ -121,8 +149,19 @@ export default function OrdersScreen() {
             </View>
           )
         }
+        ListFooterComponent={
+          nextCursor ? (
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: colors.primaryLight, opacity: loading ? 0.6 : 1 }]}
+              disabled={loading}
+              onPress={() => load(true)}
+            >
+              <Text style={[styles.btnText, { color: colors.primaryDark }]}>{loading ? 'Loading...' : 'Show older orders'}</Text>
+            </TouchableOpacity>
+          ) : null
+        }
         renderItem={({ item: o }) => {
-          const track = o.tracking.find((t) => t.url);
+          const parcels = o.tracking.filter((t) => t.url);
           return (
             <View style={[styles.order, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.orderHead}>
@@ -145,11 +184,15 @@ export default function OrdersScreen() {
                 </View>
               ))}
               <View style={styles.actions}>
-                {track?.url && (
-                  <TouchableOpacity style={[styles.smallBtn, { backgroundColor: colors.primary }]} onPress={() => WebBrowser.openBrowserAsync(track.url!)}>
-                    <Text style={styles.smallBtnText}>Track parcel</Text>
+                {parcels.map((parcel, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.smallBtn, { backgroundColor: colors.primary }]}
+                    onPress={() => WebBrowser.openBrowserAsync(parcel.url!)}
+                  >
+                    <Text style={styles.smallBtnText}>{parcels.length > 1 ? `Track parcel ${i + 1}` : 'Track parcel'}</Text>
                   </TouchableOpacity>
-                )}
+                ))}
                 <TouchableOpacity
                   style={[styles.smallBtn, { backgroundColor: colors.primaryLight }]}
                   onPress={() => WebBrowser.openBrowserAsync(o.statusPageUrl)}
@@ -182,7 +225,7 @@ const styles = StyleSheet.create({
   item: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   thumb: { width: 40, height: 40, borderRadius: 8, backgroundColor: '#fff' },
   itemText: { flex: 1, fontSize: 14 },
-  actions: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   smallBtn: { borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
   smallBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
 });

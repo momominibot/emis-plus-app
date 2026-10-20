@@ -88,6 +88,9 @@ export async function handleShopifyWebhook(req: Request, cfg: WebhookConfig): Pr
             customerId: order.customerId,
             orderName: order.orderName,
             amountCents: order.amountCents,
+            presentmentCents: order.presentmentCents,
+            presentmentCurrency: order.presentmentCurrency,
+            taxesIncluded: order.taxesIncluded,
           })
         : { outcome: order.reason };
     } else if (topic === 'refunds/create') {
@@ -97,7 +100,11 @@ export async function handleShopifyWebhook(req: Request, cfg: WebhookConfig): Pr
             webhookId,
             refundId: refund.refundId,
             orderId: refund.orderId,
-            amountCents: refund.amountCents,
+            lineCents: refund.lineCents,
+            lineTaxCents: refund.lineTaxCents,
+            txCents: refund.txCents,
+            txCurrency: refund.txCurrency,
+            otherCents: refund.otherCents,
           })
         : { outcome: refund.reason };
     } else {

@@ -82,7 +82,13 @@ Deno.test('parsePaidOrder awards only paid, SGD, non-test, customer orders', () 
   const opts = { currency: 'SGD', allowTestOrders: false };
   assertEquals(parsePaidOrder(paidPayload(), opts), {
     ok: true, orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
+    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true,
   });
+  const usd = parsePaidOrder(paidPayload({
+    taxes_included: false,
+    subtotal_price_set: { shop_money: { amount: '135.00', currency_code: 'SGD' }, presentment_money: { amount: '100.00', currency_code: 'USD' } },
+  }), opts);
+  assertEquals(usd.ok && [usd.amountCents, usd.presentmentCents, usd.presentmentCurrency, usd.taxesIncluded], [13500, 10000, 'USD', false]);
   assertEquals(parsePaidOrder(paidPayload({ test: true }), opts), { ok: false, reason: 'ignored_test_order' });
   assertEquals(parsePaidOrder(paidPayload({ test: true }), { ...opts, allowTestOrders: true }).ok, true);
   assertEquals(parsePaidOrder(paidPayload({ customer: null }), opts), { ok: false, reason: 'ignored_guest_checkout' });
@@ -102,32 +108,43 @@ Deno.test('parsePaidOrder awards only paid, SGD, non-test, customer orders', () 
   );
 });
 
-Deno.test('parseRefund counts refunded merchandise, never shipping', () => {
+Deno.test('parseRefund reports items, tax, money returned and shipping separately', () => {
   const opts = { currency: 'SGD' };
-  const money = (amount: string | number) => ({ shop_money: { amount, currency_code: 'SGD' } });
-  const base = { id: 890088186047892319n.toString(), admin_graphql_api_id: 'gid://shopify/Refund/890088186047892319', order_id: '820982911946154508' };
+  const money = (amount: string | number, currency_code = 'SGD') => ({ shop_money: { amount, currency_code } });
+  const base = { admin_graphql_api_id: 'gid://shopify/Refund/890088186047892319', order_id: '820982911946154508' };
+  const ids = { refundId: '890088186047892319', orderId: '820982911946154508' };
   assertEquals(
-    parseRefund({ ...base, refund_line_items: [{ subtotal_set: money('89.99') }, { subtotal_set: money('19.99') }], transactions: [{ kind: 'refund', status: 'success', amount: '200.00' }] }, opts),
-    { ok: true, refundId: '890088186047892319', orderId: '820982911946154508', amountCents: 10998 },
+    parseRefund({
+      ...base,
+      refund_line_items: [
+        { subtotal_set: money('89.99'), total_tax_set: money('0.00') },
+        { subtotal_set: money('19.99'), total_tax_set: money('1.80') },
+      ],
+      transactions: [
+        { kind: 'refund', status: 'success', amount: '100.00', currency: 'SGD' },
+        { kind: 'refund', status: 'pending', amount: '20.00', currency: 'SGD' },
+        { kind: 'refund', status: 'failure', amount: '999.00', currency: 'SGD' },
+        { kind: 'sale', status: 'success', amount: '999.00' },
+      ],
+      refund_shipping_lines: [{ subtotal_amount_set: money(8), tax_amount_set: money('0.72') }],
+      total_duties_set: money('1.00'),
+    }, opts),
+    { ok: true, ...ids, lineCents: 10998, lineTaxCents: 180, txCents: 12000, txCurrency: null, otherCents: 972 },
   );
-  // Shipping-only refund: transaction covers shipping, so nothing is clawed back.
-  assertEquals(
-    parseRefund({ ...base, refund_line_items: [], transactions: [{ kind: 'refund', status: 'success', amount: '8.00', currency: 'SGD' }], refund_shipping_lines: [{ subtotal_amount_set: money(8) }] }, opts),
-    { ok: true, refundId: '890088186047892319', orderId: '820982911946154508', amountCents: 0 },
-  );
-  // Amount-only refund with shipping inside it (legacy order adjustment), failed transactions ignored.
+  // Legacy shipping adjustment (negative amounts), money returned in the customer's currency.
   assertEquals(
     parseRefund({
       ...base, refund_line_items: [],
-      transactions: [
-        { kind: 'refund', status: 'success', amount: '30.00', currency: null },
-        { kind: 'refund', status: 'failure', amount: '30.00' },
-      ],
-      order_adjustments: [{ kind: 'shipping_refund', amount_set: money('-5.00') }],
+      transactions: [{ kind: 'refund', status: 'success', amount: '30.00', currency: 'USD' }],
+      order_adjustments: [{ kind: 'shipping_refund', amount_set: money('-5.00'), tax_amount_set: money('-0.45') }],
     }, opts),
-    { ok: true, refundId: '890088186047892319', orderId: '820982911946154508', amountCents: 2500 },
+    { ok: true, ...ids, lineCents: 0, lineTaxCents: 0, txCents: 3000, txCurrency: 'USD', otherCents: 545 },
   );
-  assertEquals(parseRefund({ ...base, refund_line_items: [{ subtotal_set: { shop_money: { amount: '1.00', currency_code: 'USD' } } }] }, opts), { ok: false, reason: 'ignored_currency' });
+  assertEquals(parseRefund({ ...base, refund_line_items: [{ subtotal_set: money('1.00', 'USD') }] }, opts), { ok: false, reason: 'ignored_currency' });
+  assertEquals(
+    parseRefund({ ...base, transactions: [{ kind: 'refund', status: 'success', amount: '1', currency: 'USD' }, { kind: 'refund', status: 'success', amount: '1', currency: 'SGD' }] }, opts),
+    { ok: false, reason: 'invalid_payload' },
+  );
   assertEquals(parseRefund({ ...base, order_id: 'nope' }, opts), { ok: false, reason: 'invalid_payload' });
 });
 
@@ -160,7 +177,10 @@ Deno.test('webhook: signed orders/paid is passed to the database', async () => {
     'x-shopify-shop-domain': SHOP, 'x-shopify-webhook-id': 'wh-1',
   }), { secret: 's3cret', shopDomain: SHOP, currency: 'SGD', allowTestOrders: false, db });
   assertEquals(res.status, 200);
-  assertEquals(calls.paid, [{ webhookId: 'wh-1', orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345 }]);
+  assertEquals(calls.paid, [{
+    webhookId: 'wh-1', orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
+    presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true,
+  }]);
 });
 
 Deno.test('webhook: rejects bad signatures, other shops, missing secret, wrong method', async () => {
