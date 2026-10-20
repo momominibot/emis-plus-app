@@ -131,10 +131,12 @@ function adopt(stored: Session | null) {
 }
 
 /**
- * Web: one tab at a time may refresh or finish a sign-in (Web Locks API).
- * Sign-out and expiry never wait for it; instead every refresh re-reads
- * storage before writing, so it cannot write back an account another tab
- * just signed out of. Native has one JS context and needs no lock.
+ * Web: every write of the stored session (refresh, sign-in, sign-out,
+ * expiry) runs under one cross-tab lock (Web Locks API) and re-reads storage
+ * first, so no tab can write back an account another tab signed out of.
+ * Token requests time out, so the lock is never held for long; sign-out
+ * also shows the signed-out state at once while it waits. Native has one JS
+ * context and needs no lock.
  */
 function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
   const locks = Platform.OS === 'web' && typeof navigator !== 'undefined'
@@ -155,11 +157,14 @@ function accountOf(s: Session): string {
   return 'id:' + s.idToken;
 }
 
+// While this tab is signing out, other tabs' writes must not sign it back in.
+let signingOut = 0;
+
 // Web: another tab signed in or out. Follow it instead of using stale tokens.
 if (Platform.OS === 'web' && typeof window !== 'undefined' && SIGN_IN_AVAILABLE) {
   window.addEventListener('storage', (e) => {
     if (e.key !== null && !e.key.startsWith('emis.auth.')) return;
-    if (e.key === KEYS.pending) return;
+    if (e.key === KEYS.pending || signingOut > 0) return;
     generation++;
     const gen = generation;
     readStored().then((stored) => {
@@ -179,10 +184,11 @@ class TokenError extends Error {
 type TokenResponse = { access_token: string; expires_in: number; id_token?: string; refresh_token?: string };
 
 async function tokenRequest(endpoint: string, fields: Record<string, string>): Promise<TokenResponse> {
-  // A stalled request must not hold the cross-tab lock forever.
+  // A stalled request (headers or body) must not hold the cross-tab lock forever.
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 15_000);
   let res: Response;
+  let data: Record<string, any>;
   try {
     res = await fetch(endpoint, {
       method: 'POST',
@@ -190,14 +196,17 @@ async function tokenRequest(endpoint: string, fields: Record<string, string>): P
       body: formBody(fields),
       signal: abort.signal,
     });
+    data = await res.json().catch((err) => {
+      if (abort.signal.aborted) throw err;
+      return {};
+    });
   } finally {
     clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
   if (!res.ok || typeof data.access_token !== 'string' || typeof data.expires_in !== 'number') {
     throw new TokenError(res.status, data.error);
   }
-  return data;
+  return data as TokenResponse;
 }
 
 let signingIn: Promise<SignInResult | null> | null = null;
@@ -386,14 +395,32 @@ async function storedStill(s: Session): Promise<boolean> {
 /** Called when Shopify rejects a token: sign out, unless the session has moved on since. */
 export async function expireSession(rejectedToken: string): Promise<void> {
   if (!current || current.accessToken !== rejectedToken) return;
-  if (Platform.OS === 'web' && !(await storedStill(current))) return; // another tab already moved on
-  if (current && current.accessToken === rejectedToken) await commit(null);
+  await withAuthLock(async () => {
+    if (Platform.OS === 'web') {
+      const stored = await readStored();
+      if (!stored || stored.accessToken !== rejectedToken) {
+        adopt(stored); // another tab already refreshed, signed out or switched
+        return;
+      }
+    } else if (!current || current.accessToken !== rejectedToken) {
+      return;
+    }
+    await commit(null);
+  });
 }
 
-/** Signs out at once, locally first; it never waits behind a refresh in progress. */
+/** Signs out. The app shows signed-out at once; storage is cleared under the tab lock. */
 export async function signOut(): Promise<void> {
   const s = await loadSession();
-  await commit(null);
+  generation++;
+  current = null;
+  emit();
+  signingOut++;
+  try {
+    await withAuthLock(() => commit(null));
+  } finally {
+    signingOut--;
+  }
   if (!s) return;
   try {
     const d = await getDiscovery();

@@ -129,7 +129,7 @@ Deno.test('parseRefund reports items, tax, money returned and shipping separatel
       refund_shipping_lines: [{ subtotal_amount_set: money(8), tax_amount_set: money('0.72') }],
       total_duties_set: money('1.00'),
     }, opts),
-    { ok: true, ...ids, lineCents: 10998, lineTaxCents: 180, txCents: 12000, txCurrency: null, otherCents: 972 },
+    { ok: true, ...ids, lineCents: 10998, lineTaxCents: 180, txCents: 12000, txCurrency: null, otherCents: 972, otherPresentmentCents: null, lineTaxPresentmentCents: null },
   );
   // Legacy shipping adjustment (negative amounts), money returned in the customer's currency.
   assertEquals(
@@ -138,7 +138,7 @@ Deno.test('parseRefund reports items, tax, money returned and shipping separatel
       transactions: [{ kind: 'refund', status: 'success', amount: '30.00', currency: 'USD' }],
       order_adjustments: [{ kind: 'shipping_refund', amount_set: money('-5.00'), tax_amount_set: money('-0.45') }],
     }, opts),
-    { ok: true, ...ids, lineCents: 0, lineTaxCents: 0, txCents: 3000, txCurrency: 'USD', otherCents: 545 },
+    { ok: true, ...ids, lineCents: 0, lineTaxCents: 0, txCents: 3000, txCurrency: 'USD', otherCents: 545, otherPresentmentCents: null, lineTaxPresentmentCents: 0 },
   );
   // Extra fees are not merchandise; shipping tax comes from the shipping line when the refund has no tax amount.
   assertEquals(
@@ -152,8 +152,16 @@ Deno.test('parseRefund reports items, tax, money returned and shipping separatel
         shipping_line: { price_set: money('10.00'), tax_lines: [{ price_set: money('0.90') }] },
       }],
     }, opts),
-    { ok: true, ...ids, lineCents: 2000, lineTaxCents: 0, txCents: 4090, txCurrency: null, otherCents: 2090 },
+    { ok: true, ...ids, lineCents: 2000, lineTaxCents: 0, txCents: 4090, txCurrency: null, otherCents: 2090, otherPresentmentCents: null, lineTaxPresentmentCents: 0 },
   );
+  // Both currencies present: exclusions are reported in the customer's currency too.
+  const both = (shop: string, usd: string) => ({ shop_money: { amount: shop, currency_code: 'SGD' }, presentment_money: { amount: usd, currency_code: 'USD' } });
+  const fx = parseRefund({
+    ...base, refund_line_items: [],
+    transactions: [{ kind: 'refund', status: 'success', amount: '5.25', currency: 'USD' }],
+    refund_shipping_lines: [{ subtotal_amount_set: both('7.04', '5.25'), tax_amount_set: both('0.00', '0.00') }],
+  }, opts);
+  assertEquals(fx.ok && [fx.txCents, fx.txCurrency, fx.otherCents, fx.otherPresentmentCents], [525, 'USD', 704, 525]);
   // Discounted shipping: S$20 list price cut to S$10, S$0.90 tax, refunded in full.
   const discounted = parseRefund({
     ...base, refund_line_items: [],

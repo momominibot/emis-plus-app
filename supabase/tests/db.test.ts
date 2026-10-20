@@ -16,7 +16,10 @@ function refund(t: TestDb, refundId: number | string, order: number | string, ce
     lineCents: cents, lineTaxCents: 0, txCents: cents, txCurrency: null, otherCents: 0,
   });
 }
-type RefundParts = { lineCents?: number; lineTaxCents?: number; txCents?: number; txCurrency?: string | null; otherCents?: number };
+type RefundParts = {
+  lineCents?: number; lineTaxCents?: number; txCents?: number; txCurrency?: string | null; otherCents?: number;
+  otherPresentmentCents?: number | null; lineTaxPresentmentCents?: number | null;
+};
 function refundParts(t: TestDb, refundId: number, order: number, parts: RefundParts) {
   return t.db.recordRefund({
     webhookId: wh(), refundId: String(refundId), orderId: String(order),
@@ -327,6 +330,31 @@ dbTest('a shipping refund between foreign-currency part refunds cannot keep the 
   assert(Number(o.kept) < 100, 'at most a rounding cent is left: ' + o.kept);
   assertEquals((await member(t, 2)).referredStatus, 'reversed');
   assertEquals(await points(t, 1), 0);
+});
+
+dbTest('a shipping refund in between never changes what the goods refunds add up to', async (t) => {
+  // Review example: S$134 of goods paid as US$100, S$7.04 shipping paid as US$5.25.
+  async function keptAfter(withShipping: boolean, presentmentGiven: boolean) {
+    const order = withShipping ? (presentmentGiven ? 21 : 22) : 20;
+    const customer = 100 + order;
+    await t.db.recordPaidOrder({
+      webhookId: wh(), orderId: String(order), customerId: String(customer), orderName: '#' + order, amountCents: 13400,
+      presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
+    });
+    await refundParts(t, order * 10 + 1, order, { txCents: 2500, txCurrency: 'USD' });
+    if (withShipping) {
+      await refundParts(t, order * 10 + 2, order, {
+        txCents: 525, txCurrency: 'USD', otherCents: 704, otherPresentmentCents: presentmentGiven ? 525 : null,
+      });
+    }
+    await refundParts(t, order * 10 + 3, order, { txCents: 7426, txCurrency: 'USD' });
+    const [o] = await t.sql`select (amount_cents - refunded_cents)::int as kept from loyalty.orders where order_id = ${order}`;
+    return o.kept;
+  }
+  const plain = await keptAfter(false, false);
+  assertEquals(plain, 99);
+  assertEquals(await keptAfter(true, true), plain);
+  assertEquals(await keptAfter(true, false), plain);
 });
 
 dbTest('referrals need a first order of at least S$1 that keeps at least S$1', async (t) => {

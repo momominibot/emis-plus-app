@@ -125,15 +125,19 @@ export type RefundParse =
       txCents: number;
       txCurrency: string | null;
       otherCents: number;
+      /** Exclusions and item tax in the money-returned currency; null when the payload lacks them. */
+      otherPresentmentCents: number | null;
+      lineTaxPresentmentCents: number | null;
     }
   | { ok: false; reason: string };
 
 /**
  * refunds/create payload -> the parts the database needs to work out the
- * refunded merchandise against its order (loyalty.refund_merchandise_cents):
- * refunded items and their tax (shop money), money returned to the customer
- * (successful or pending, in its own currency) and refunded shipping,
- * shipping tax, duties and extra fees (shop money).
+ * refunded merchandise against its order (loyalty.apply_refund): refunded
+ * items and their tax, money returned to the customer (successful or
+ * pending, in its own currency) and refunded shipping, shipping tax, duties
+ * and extra fees. Amounts that are excluded from merchandise are read in
+ * shop money and, where present, in the customer's (presentment) money.
  */
 export function parseRefund(payload: unknown, opts: { currency: string }): RefundParse {
   const refund = obj(payload);
@@ -144,18 +148,32 @@ export function parseRefund(payload: unknown, opts: { currency: string }): Refun
     if (money.currency !== opts.currency) throw new CurrencyError();
     return moneyToCents(String(money.amount).replace(/^-/, ''));
   };
+  // Presentment amounts; `missing` turns true if any non-zero part lacks one.
+  let missing = false;
+  const presentCents = (set: unknown): number => {
+    const money = obj(obj(set)?.presentment_money);
+    if (!money) {
+      if (shopMoney(set) && shopCents(set) > 0) missing = true;
+      return 0;
+    }
+    return moneyToCents(String(money.amount).replace(/^-/, ''));
+  };
   try {
     const refundId = idFrom(refund.admin_graphql_api_id ?? refund.id, 'Refund');
     const orderId = idFrom(refund.order_id, 'Order');
 
     let lineCents = 0;
     let lineTaxCents = 0;
+    let lineTaxPresentment = 0;
     for (const raw of Array.isArray(refund.refund_line_items) ? refund.refund_line_items : []) {
       const line = obj(raw);
       if (!line || !shopMoney(line.subtotal_set)) throw new Error('line without subtotal');
       lineCents += shopCents(line.subtotal_set);
       lineTaxCents += shopCents(line.total_tax_set);
+      lineTaxPresentment += presentCents(line.total_tax_set);
     }
+    const lineTaxMissing = missing;
+    missing = false;
 
     let txCents = 0;
     let txCurrency: string | null = null;
@@ -170,18 +188,34 @@ export function parseRefund(payload: unknown, opts: { currency: string }): Refun
     }
 
     let otherCents = shopCents(refund.total_duties_set) + shopCents(refund.total_additional_fees_set);
+    let otherPresentment = presentCents(refund.total_duties_set) + presentCents(refund.total_additional_fees_set);
     for (const raw of Array.isArray(refund.refund_shipping_lines) ? refund.refund_shipping_lines : []) {
       const line = obj(raw);
       const shipping = shopCents(line?.subtotal_amount_set);
-      otherCents += shipping + (line?.tax_amount_set ? shopCents(line.tax_amount_set) : shippingTaxShare(obj(line?.shipping_line), shipping, shopCents));
+      otherCents += shipping;
+      otherPresentment += presentCents(line?.subtotal_amount_set);
+      if (line?.tax_amount_set) {
+        otherCents += shopCents(line.tax_amount_set);
+        otherPresentment += presentCents(line.tax_amount_set);
+      } else {
+        otherCents += shippingTaxShare(obj(line?.shipping_line), shipping, shopCents);
+        otherPresentment += shippingTaxShare(obj(line?.shipping_line), presentCents(line?.subtotal_amount_set), presentCents);
+      }
     }
     // Before API 2024-10 refunded shipping came as an order adjustment.
     for (const raw of Array.isArray(refund.order_adjustments) ? refund.order_adjustments : []) {
       const adj = obj(raw);
-      if (adj?.kind === 'shipping_refund') otherCents += shopCents(adj.amount_set) + shopCents(adj.tax_amount_set);
+      if (adj?.kind === 'shipping_refund') {
+        otherCents += shopCents(adj.amount_set) + shopCents(adj.tax_amount_set);
+        otherPresentment += presentCents(adj.amount_set) + presentCents(adj.tax_amount_set);
+      }
     }
 
-    return { ok: true, refundId, orderId, lineCents, lineTaxCents, txCents, txCurrency, otherCents };
+    return {
+      ok: true, refundId, orderId, lineCents, lineTaxCents, txCents, txCurrency, otherCents,
+      otherPresentmentCents: missing ? null : otherPresentment,
+      lineTaxPresentmentCents: lineTaxMissing ? null : lineTaxPresentment,
+    };
   } catch (err) {
     return { ok: false, reason: err instanceof CurrencyError ? 'ignored_currency' : 'invalid_payload' };
   }
@@ -194,12 +228,12 @@ class CurrencyError extends Error {}
  * the refund itself: the shipping line's tax, pro rata to the part of its
  * price that was refunded.
  */
-function shippingTaxShare(shippingLine: Obj | null, refundedCents: number, shopCents: (set: unknown) => number): number {
+function shippingTaxShare(shippingLine: Obj | null, refundedCents: number, cents: (set: unknown) => number): number {
   if (!shippingLine || refundedCents <= 0) return 0;
   // What the customer actually paid for shipping, after shipping discounts.
-  const price = shopCents(shippingLine.discounted_price_set ?? shippingLine.price_set);
+  const price = cents(shippingLine.discounted_price_set ?? shippingLine.price_set);
   let tax = 0;
-  for (const raw of Array.isArray(shippingLine.tax_lines) ? shippingLine.tax_lines : []) tax += shopCents(obj(raw)?.price_set);
+  for (const raw of Array.isArray(shippingLine.tax_lines) ? shippingLine.tax_lines : []) tax += cents(obj(raw)?.price_set);
   if (!price || !tax) return 0;
   return Math.round((tax * Math.min(refundedCents, price)) / price);
 }

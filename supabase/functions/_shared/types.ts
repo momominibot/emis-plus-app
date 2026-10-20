@@ -22,6 +22,8 @@ export interface RefundInput {
   /** null means the shop currency */
   txCurrency: string | null;
   otherCents: number;
+  otherPresentmentCents?: number | null;
+  lineTaxPresentmentCents?: number | null;
 }
 
 export type ReferralOutcome =

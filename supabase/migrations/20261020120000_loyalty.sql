@@ -13,8 +13,7 @@
 --     code once, only while they have no orders, never their own code and
 --     never back to someone they referred. Both bonuses wait for the new
 --     customer's first paid order of at least S$1, and both are reversed if
---     refunds leave less than S$1 of that order (a whole-dollar threshold, so
---     currency rounding of a cent can never keep the bonuses alive).
+--     refunds leave less than S$1 of that order.
 --
 -- Amounts are integer cents (SGD). Tier multipliers are stored x10 so all
 -- arithmetic stays in integers: points = floor(cents * multiplier_x10 / 1000).
@@ -43,8 +42,9 @@ create table loyalty.orders (
   presentment_cents    bigint check (presentment_cents >= 0),
   presentment_currency text check (presentment_currency ~ '^[A-Z]{3}$'),
   taxes_included boolean not null default true,
-  -- Refund money already returned in the presentment currency, so each
-  -- conversion works on the running total and full refunds add up exactly.
+  -- Merchandise refunded so far, measured in the presentment currency, so
+  -- conversion always works on the running total: refunding everything adds
+  -- up to the whole order whatever shipping refunds came in between.
   refunded_presentment_cents bigint not null default 0 check (refunded_presentment_cents >= 0),
   multiplier_x10 integer not null check (multiplier_x10 in (10, 15, 20)),
   points_earned  integer not null check (points_earned >= 0),
@@ -68,6 +68,9 @@ create table loyalty.refunds (
   tx_cents       bigint not null default 0 check (tx_cents >= 0),       -- money returned (successful or pending)
   tx_currency    text check (tx_currency ~ '^[A-Z]{3}$'),               -- null: shop currency
   other_cents    bigint not null default 0 check (other_cents >= 0),    -- shipping, shipping tax, duties, extra fees
+  -- The same exclusions and item tax in the presentment currency (null: not in the payload).
+  other_presentment_cents    bigint check (other_presentment_cents >= 0),
+  line_tax_presentment_cents bigint check (line_tax_presentment_cents >= 0),
   amount_cents   bigint check (amount_cents >= 0),
   applied        boolean not null default false,
   created_at     timestamptz not null default now()
@@ -224,16 +227,19 @@ $$;
 -- money returned minus shipping, duties, extra fees and (for tax-exclusive
 -- prices) the items' tax. That covers item refunds, amount-only refunds and
 -- refunds where staff returned more than the items. Money returned in the
--- customer's currency is converted with the order's own exchange ratio, on
--- the running total so that refunding everything adds up to the whole order.
--- An unknown currency falls back to the items' subtotal.
+-- customer's currency has its exclusions taken off in that currency, is
+-- added to the order's running total of merchandise refunded in that
+-- currency, and only the running total is converted with the order's own
+-- exchange ratio, so refunding everything adds up to the whole order. An
+-- unknown currency falls back to the items' subtotal.
 create function loyalty.apply_refund(p_refund_id bigint) returns integer
 language plpgsql volatile set search_path = '' as $$
 declare
   r loyalty.refunds;
   o loyalty.orders;
   ref loyalty.referrals;
-  v_tx_shop bigint;
+  v_tx_merch bigint;
+  v_merch_p bigint;
   v_presentment_after bigint;
   v_amount bigint;
   v_refunded bigint;
@@ -251,20 +257,24 @@ begin
 
   v_presentment_after := o.refunded_presentment_cents;
   if r.tx_cents = 0 then
-    v_tx_shop := 0;
+    v_tx_merch := 0;
   elsif r.tx_currency is null then
-    v_tx_shop := r.tx_cents;
-  elsif r.tx_currency = o.presentment_currency and o.presentment_cents > 0 then
-    v_presentment_after := o.refunded_presentment_cents + r.tx_cents;
-    v_tx_shop := round(v_presentment_after::numeric * o.amount_cents / o.presentment_cents)::bigint
-               - round(o.refunded_presentment_cents::numeric * o.amount_cents / o.presentment_cents)::bigint;
+    v_tx_merch := r.tx_cents - r.other_cents - case when o.taxes_included then 0 else r.line_tax_cents end;
+  elsif r.tx_currency = o.presentment_currency and o.presentment_cents > 0 and o.amount_cents > 0 then
+    v_merch_p := greatest(
+      r.tx_cents
+      - coalesce(r.other_presentment_cents, round(r.other_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
+      - case when o.taxes_included then 0
+             else coalesce(r.line_tax_presentment_cents, round(r.line_tax_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
+        end,
+      0);
+    v_presentment_after := o.refunded_presentment_cents + v_merch_p;
+    v_tx_merch := round(v_presentment_after::numeric * o.amount_cents / o.presentment_cents)::bigint
+                - round(o.refunded_presentment_cents::numeric * o.amount_cents / o.presentment_cents)::bigint;
   else
-    v_tx_shop := null;
+    v_tx_merch := null;
   end if;
-  v_amount := greatest(
-    r.line_cents,
-    coalesce(v_tx_shop - r.other_cents - case when o.taxes_included then 0 else r.line_tax_cents end, 0),
-    0);
+  v_amount := greatest(r.line_cents, coalesce(v_tx_merch, 0), 0);
 
   v_refunded := least(o.refunded_cents + v_amount, o.amount_cents);
   -- Clawback so far should equal what the refunded part earned, computed on
@@ -408,7 +418,8 @@ $$;
 
 create function loyalty.record_refund(
   p_webhook_id text, p_refund_id bigint, p_order_id bigint,
-  p_line_cents bigint, p_line_tax_cents bigint, p_tx_cents bigint, p_tx_currency text, p_other_cents bigint
+  p_line_cents bigint, p_line_tax_cents bigint, p_tx_cents bigint, p_tx_currency text, p_other_cents bigint,
+  p_other_presentment_cents bigint default null, p_line_tax_presentment_cents bigint default null
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
@@ -431,9 +442,11 @@ begin
     end if;
   end if;
 
-  insert into loyalty.refunds (refund_id, order_id, line_cents, line_tax_cents, tx_cents, tx_currency, other_cents)
+  insert into loyalty.refunds (refund_id, order_id, line_cents, line_tax_cents, tx_cents, tx_currency, other_cents,
+                               other_presentment_cents, line_tax_presentment_cents)
   values (p_refund_id, p_order_id, coalesce(p_line_cents, 0), coalesce(p_line_tax_cents, 0),
-          coalesce(p_tx_cents, 0), p_tx_currency, coalesce(p_other_cents, 0))
+          coalesce(p_tx_cents, 0), p_tx_currency, coalesce(p_other_cents, 0),
+          p_other_presentment_cents, p_line_tax_presentment_cents)
   on conflict (refund_id) do nothing;
 
   select customer_id into v_customer from loyalty.orders where order_id = p_order_id;

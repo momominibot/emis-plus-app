@@ -105,6 +105,8 @@ export async function handleShopifyWebhook(req: Request, cfg: WebhookConfig): Pr
             txCents: refund.txCents,
             txCurrency: refund.txCurrency,
             otherCents: refund.otherCents,
+            otherPresentmentCents: refund.otherPresentmentCents,
+            lineTaxPresentmentCents: refund.lineTaxPresentmentCents,
           })
         : { outcome: refund.reason };
     } else {

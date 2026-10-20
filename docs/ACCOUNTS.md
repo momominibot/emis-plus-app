@@ -38,7 +38,7 @@ lookup from code to customer and no ledger.
 | Which orders | `orders/paid` only; SGD; customer attached (guest checkouts earn nothing); Shopify test orders ignored |
 | Refunds | Refunded merchandise takes back exactly the points it earned: the larger of the refunded items and the money returned minus shipping, shipping tax, duties, extra fees (and item tax when prices exclude tax). Pending refund transactions count. Money returned in the customer's currency converts at the order's own rate. Shipping-only refunds take nothing |
 | Referral | Friend enters the code in the app before their first order; they must have no orders at all; one claim per customer ever; not their own code; not back to someone they referred |
-| Referral bonus | 100 points each, only when the friend's first paid order of at least S$1 arrives; both reversed if refunds leave less than S$1 of that order (including refunds that reached us before the payment). The S$1 threshold keeps currency rounding of a cent from deciding it |
+| Referral bonus | 100 points each, only when the friend's first paid order of at least S$1 arrives; both reversed if refunds leave less than S$1 of that order (including refunds that reached us before the payment). Foreign-currency refunds are totalled in the customer's currency before converting, so shipping refunds in between do not shift the result |
 | Not built | Redeeming points, expiry, backfill of orders paid before launch |
 
 `TIER_CONFIG` perks in `lib/types.ts` (birthday voucher, free shipping, free gift) are copy only;
@@ -92,15 +92,16 @@ nothing delivers them. Confirm or remove before launch.
   keeps its clawback until staff adjust it. Each refund is recorded as first reported; a later change to the same
   refund ID is not picked up (Shopify sends refunds/create once per refund).
 - Web stores tokens in `localStorage` (native uses the Keychain/Keystore). Any XSS on the web origin could read them.
-  Tabs take turns refreshing with the Web Locks API, and every refresh re-reads storage just before writing, so a
-  sign-out or expiry in one tab (which never waits for the lock) is not undone by another tab. The re-read and the
-  write are not one atomic step, so a sub-millisecond overlap remains possible; browsers without Web Locks rely on
-  the re-read alone. Token requests time out after 15 seconds.
+  Every write of the stored session (refresh, sign-in, sign-out, expiry) runs under one cross-tab Web Lock and
+  re-reads storage first, so one tab cannot write back an account another tab signed out of. Token requests,
+  including reading the response, time out after 15 seconds, so sign-out waits at most that long for a refresh in
+  another tab (the screen shows signed-out at once). Browsers without the Web Locks API (pre-2022) fall back to the
+  re-read alone, which narrows but does not close that race.
 
 ## Tests
 
 ```bash
-supabase/tests/run.sh            # 50 Deno tests on a throwaway local Postgres 17 (needs brew postgresql@17, deno)
+supabase/tests/run.sh            # 51 Deno tests on a throwaway local Postgres 17 (needs brew postgresql@17, deno)
 npx tsc --noEmit                 # app code (supabase/ and backend/ are excluded; deno checks supabase/)
 python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 27 browser checks, see the file header
 ```

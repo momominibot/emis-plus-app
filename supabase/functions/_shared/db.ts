@@ -30,7 +30,8 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
       const [row] = await sql`
         select loyalty.record_refund(${r.webhookId}, ${r.refundId}::bigint, ${r.orderId}::bigint,
                                      ${r.lineCents}::bigint, ${r.lineTaxCents}::bigint, ${r.txCents}::bigint,
-                                     ${r.txCurrency}, ${r.otherCents}::bigint) as r`;
+                                     ${r.txCurrency}, ${r.otherCents}::bigint,
+                                     ${r.otherPresentmentCents ?? null}::bigint, ${r.lineTaxPresentmentCents ?? null}::bigint) as r`;
       return row.r;
     },
     async getMember(customerId) {
