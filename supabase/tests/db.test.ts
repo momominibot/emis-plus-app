@@ -256,6 +256,28 @@ dbTest('final balances do not depend on the order webhooks arrive in', async (t)
   await assertLedgerConsistent(t);
 });
 
+dbTest('several foreign-currency refunds on one order give the same balance in any arrival order', async (t) => {
+  // Review example: A is S$566.67 paid as US$425; two refunds of US$25 against it, then B S$100 paid later.
+  const balances = new Set<number>();
+  for (const [k, run] of permutations(['A', 'B', 'R1', 'R2']).entries()) {
+    const customer = 40_000 + k, base = 400_000 + k * 10;
+    for (const event of run) {
+      if (event === 'A') {
+        await t.db.recordPaidOrder({
+          webhookId: wh(), orderId: String(base + 1), customerId: String(customer), orderName: 'A', amountCents: 56667,
+          presentmentCents: 42500, presentmentCurrency: 'USD', taxesIncluded: true, processedAt: '2026-10-01T10:00:00+08:00',
+        });
+      }
+      if (event === 'B') await paidAt(t, base + 2, customer, 10000, '2026-10-02T10:00:00+08:00');
+      if (event === 'R1') await refundParts(t, base + 5, base + 1, { lineCents: 3334, txCents: 2500, txCurrency: 'USD' });
+      if (event === 'R2') await refundParts(t, base + 6, base + 1, { lineCents: 3333, txCents: 2500, txCurrency: 'USD' });
+    }
+    balances.add(await points(t, customer));
+  }
+  assertEquals([...balances], [599]);
+  await assertLedgerConsistent(t);
+});
+
 dbTest('the referral follows the order paid first, even when it arrives last', async (t) => {
   // A (paid first) is refunded in full; B was paid later and kept. The referral rides on A, so it ends reversed.
   for (const [k, run] of permutations(['A', 'B', 'refundA']).entries()) {

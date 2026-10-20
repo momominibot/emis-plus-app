@@ -65,7 +65,7 @@ create index orders_customer_idx on loyalty.orders (customer_id, processed_at, o
 -- Refunds are stored as Shopify reported them, even before their order has
 -- been awarded (webhook order is not guaranteed); record_paid_order applies
 -- them later. The merchandise amount is worked out against the order when
--- applied (see apply_refund) and kept in amount_cents.
+-- applied (see refresh_order_refunds) and kept in amount_cents.
 create table loyalty.refunds (
   refund_id      bigint primary key check (refund_id > 0),
   order_id       bigint not null check (order_id > 0),
@@ -111,7 +111,6 @@ create table loyalty.ledger (
   created_at    timestamptz not null default now()
 );
 create unique index ledger_one_order_award on loyalty.ledger (order_id) where kind = 'order';
-create unique index ledger_one_refund on loyalty.ledger (refund_id) where kind = 'refund';
 -- Referral entries are not unique: reconcile_customer posts whatever brings
 -- each side's net bonus to 100 or 0, so a referral can be undone and redone.
 create index ledger_referral_idx on loyalty.ledger (referral_id, customer_id) where referral_id is not null;
@@ -226,83 +225,84 @@ begin
 end
 $$;
 
--- Applies one stored refund to its awarded order. Caller holds lock_order
--- and the member row locks. Returns points clawed back, or null when the
--- order has not been awarded yet (refund stays pending).
+-- Works out an order's refunds from scratch, from every refund stored for
+-- it, taken in refund-ID order, so the result depends only on which refunds
+-- exist and never on the order their webhooks arrived in. Caller holds
+-- lock_order and the member row locks. Returns the change in points clawed
+-- back (negative if an earlier over-claw is restored), or null when the
+-- order has not been awarded yet (its refunds wait).
 --
 -- Merchandise refunded is the larger of the refunded items' subtotal and the
 -- money returned minus shipping, duties, extra fees and (for tax-exclusive
 -- prices) the items' tax. That covers item refunds, amount-only refunds and
 -- refunds where staff returned more than the items. Money returned in the
 -- customer's currency has its exclusions taken off in that currency, is
--- added to the order's running total of merchandise refunded in that
--- currency, and only the running total is converted with the order's own
--- exchange ratio, so refunding everything adds up to the whole order. An
--- unknown currency falls back to the items' subtotal.
-create function loyalty.apply_refund(p_refund_id bigint) returns integer
+-- added to a running total of merchandise refunded in that currency, and
+-- only the running total is converted with the order's own exchange ratio,
+-- so refunding everything adds up to the whole order. An unknown currency
+-- falls back to the items' subtotal.
+create function loyalty.refresh_order_refunds(p_order_id bigint, p_trigger_refund_id bigint) returns integer
 language plpgsql volatile set search_path = '' as $$
 declare
-  r loyalty.refunds;
   o loyalty.orders;
-  v_tx_merch bigint;
+  r loyalty.refunds;
+  v_cum_p bigint := 0;
   v_merch_p bigint;
-  v_presentment_after bigint;
+  v_tx_merch bigint;
   v_amount bigint;
-  v_refunded bigint;
-  v_target integer;
-  v_claw integer;
+  v_refunded bigint := 0;
+  v_clawed integer;
+  v_delta integer;
 begin
-  select * into strict r from loyalty.refunds where refund_id = p_refund_id for update;
-  if r.applied then
-    return 0;
-  end if;
-  select * into o from loyalty.orders where order_id = r.order_id for update;
+  select * into o from loyalty.orders where order_id = p_order_id for update;
   if not found then
     return null;
   end if;
 
-  v_presentment_after := o.refunded_presentment_cents;
-  if r.tx_cents = 0 then
-    v_tx_merch := 0;
-  elsif r.tx_currency is null then
-    v_tx_merch := r.tx_cents - r.other_cents - case when o.taxes_included then 0 else r.line_tax_cents end;
-  elsif r.tx_currency = o.presentment_currency and o.presentment_cents > 0 and o.amount_cents > 0 then
-    v_merch_p := greatest(
-      r.tx_cents
-      - coalesce(r.other_presentment_cents, round(r.other_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
-      - case when o.taxes_included then 0
-             else coalesce(r.line_tax_presentment_cents, round(r.line_tax_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
-        end,
-      0);
-    v_presentment_after := o.refunded_presentment_cents + v_merch_p;
-    v_tx_merch := round(v_presentment_after::numeric * o.amount_cents / o.presentment_cents)::bigint
-                - round(o.refunded_presentment_cents::numeric * o.amount_cents / o.presentment_cents)::bigint;
-  else
-    v_tx_merch := null;
-  end if;
-  v_amount := greatest(r.line_cents, coalesce(v_tx_merch, 0), 0);
+  for r in select * from loyalty.refunds where order_id = p_order_id order by refund_id for update loop
+    if r.tx_cents = 0 then
+      v_tx_merch := 0;
+    elsif r.tx_currency is null then
+      v_tx_merch := r.tx_cents - r.other_cents - case when o.taxes_included then 0 else r.line_tax_cents end;
+    elsif r.tx_currency = o.presentment_currency and o.presentment_cents > 0 and o.amount_cents > 0 then
+      v_merch_p := greatest(
+        r.tx_cents
+        - coalesce(r.other_presentment_cents, round(r.other_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
+        - case when o.taxes_included then 0
+               else coalesce(r.line_tax_presentment_cents, round(r.line_tax_cents::numeric * o.presentment_cents / o.amount_cents)::bigint)
+          end,
+        0);
+      v_tx_merch := round((v_cum_p + v_merch_p)::numeric * o.amount_cents / o.presentment_cents)::bigint
+                  - round(v_cum_p::numeric * o.amount_cents / o.presentment_cents)::bigint;
+      v_cum_p := v_cum_p + v_merch_p;
+    else
+      v_tx_merch := null;
+    end if;
+    v_amount := greatest(r.line_cents, coalesce(v_tx_merch, 0), 0);
+    v_refunded := v_refunded + v_amount;
+    if not r.applied or r.amount_cents is distinct from v_amount then
+      update loyalty.refunds set applied = true, amount_cents = v_amount where refund_id = r.refund_id;
+    end if;
+  end loop;
 
-  v_refunded := least(o.refunded_cents + v_amount, o.amount_cents);
-  -- Clawback so far should equal what the refunded part earned, computed on
-  -- the running total so repeated partial refunds never drift.
-  v_target := o.points_earned - ((o.amount_cents - v_refunded) * o.multiplier_x10 / 1000)::integer;
-  v_claw := greatest(v_target - o.points_clawed, 0);
+  v_refunded := least(v_refunded, o.amount_cents);
+  -- Points clawed back = what the refunded part earned at this order's rate.
+  v_clawed := o.points_earned - ((o.amount_cents - v_refunded) * o.multiplier_x10 / 1000)::integer;
+  v_delta := v_clawed - o.points_clawed;
 
   update loyalty.orders
-     set refunded_cents = v_refunded, points_clawed = points_clawed + v_claw,
-         refunded_presentment_cents = v_presentment_after
+     set refunded_cents = v_refunded, points_clawed = v_clawed, refunded_presentment_cents = v_cum_p
    where order_id = o.order_id;
   update loyalty.members
      set total_spent_cents = greatest(total_spent_cents - (v_refunded - o.refunded_cents), 0), updated_at = now()
    where customer_id = o.customer_id;
-  if v_claw > 0 then
-    perform loyalty.add_points(o.customer_id, 'refund', -v_claw,
-      'Refund on order ' || coalesce(o.order_name, '#' || o.order_id::text),
-      o.order_id, r.refund_id, null);
+  if v_delta <> 0 then
+    perform loyalty.add_points(o.customer_id, 'refund', -v_delta,
+      case when v_delta > 0 then 'Refund on order ' else 'Refund recalculated on order ' end
+        || coalesce(o.order_name, '#' || o.order_id::text),
+      o.order_id, p_trigger_refund_id, null);
   end if;
-
-  update loyalty.refunds set applied = true, amount_cents = v_amount where refund_id = r.refund_id;
-  return v_claw;
+  return v_delta;
 end
 $$;
 
@@ -408,7 +408,6 @@ declare
   v_mult integer;
   v_points integer;
   v_balance bigint;
-  v_refund record;
   v_referral text := null;
   v_result jsonb;
 begin
@@ -464,11 +463,10 @@ begin
     end if;
 
     -- Refunds that arrived before this award.
-    for v_refund in
-      select refund_id from loyalty.refunds where order_id = p_order_id and not applied order by refund_id
-    loop
-      perform loyalty.apply_refund(v_refund.refund_id);
-    end loop;
+    if exists (select 1 from loyalty.refunds where order_id = p_order_id) then
+      perform loyalty.refresh_order_refunds(p_order_id,
+        (select max(refund_id) from loyalty.refunds where order_id = p_order_id));
+    end if;
 
     perform loyalty.reconcile_customer(p_customer_id);
 
@@ -533,7 +531,7 @@ begin
     if v_referrer is distinct from (select referrer_id from loyalty.referrals where referee_id = v_customer) then
       raise exception 'referral changed while locking' using errcode = '40001';
     end if;
-    v_claw := loyalty.apply_refund(p_refund_id);
+    v_claw := loyalty.refresh_order_refunds(p_order_id, p_refund_id);
     perform loyalty.reconcile_customer(v_customer);
     v_result := jsonb_build_object('outcome', 'applied', 'clawed_back', v_claw);
   end if;

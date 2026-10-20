@@ -36,7 +36,7 @@ lookup from code to customer and no ledger.
 | Earning | 1 point per S$1 of the order subtotal (after discounts, before shipping), rounded down |
 | Tiers | Net spend (after refunds) on orders paid before this one, by Shopify's `processed_at`: Silver 1x, Gold from S$500 1.5x, Diamond from S$2,000 2x (mirrors `TIER_CONFIG`). If a webhook arrives late, later orders are re-priced and the difference shows as a "Tier rate updated" entry |
 | Which orders | `orders/paid` only; SGD; customer attached (guest checkouts earn nothing); Shopify test orders ignored |
-| Refunds | Refunded merchandise takes back exactly the points it earned: the larger of the refunded items and the money returned minus shipping, shipping tax, duties, extra fees (and item tax when prices exclude tax). Pending refund transactions count. Money returned in the customer's currency converts at the order's own rate. Shipping-only refunds take nothing |
+| Refunds | Refunded merchandise takes back exactly the points it earned: the larger of the refunded items and the money returned minus shipping, shipping tax, duties, extra fees (and item tax when prices exclude tax). Pending refund transactions count. Money returned in the customer's currency converts at the order's own rate. Shipping-only refunds take nothing. Each time a refund arrives the order's refunds are recalculated from all of them in refund-ID order, so the result never depends on arrival order (a correction shows as "Refund recalculated") |
 | Referral | Friend enters the code in the app before their first order; they must have no orders at all; one claim per customer ever; not their own code; not back to someone they referred |
 | Referral bonus | 100 points each, based on the friend's first order of at least S$1 by payment time (not by webhook arrival); both reversed if refunds leave less than S$1 of that order (including refunds that reached us before the payment). Foreign-currency refunds are totalled in the customer's currency before converting, so shipping refunds in between do not shift the result |
 | Not built | Redeeming points, expiry, backfill of orders paid before launch |
@@ -100,7 +100,7 @@ nothing delivers them. Confirm or remove before launch.
 ## Tests
 
 ```bash
-supabase/tests/run.sh            # 54 Deno tests on a throwaway local Postgres 17 (needs brew postgresql@17, deno)
+supabase/tests/run.sh            # 55 Deno tests on a throwaway local Postgres 17 (needs brew postgresql@17, deno)
 npx tsc --noEmit                 # app code (supabase/ and backend/ are excluded; deno checks supabase/)
 python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 27 browser checks, see the file header
 ```
