@@ -10,10 +10,10 @@ import { getNewProducts } from '@/lib/shopify';
 import { MemberProfile, Product, Voucher, TIER_CONFIG } from '@/lib/types';
 
 const SHOP_BY_NEED = [
-  { id: 'wound', label: 'Wound Care', icon: 'bandage', handle: 'wound-care' },
-  { id: 'ostomy', label: 'Ostomy', icon: 'water', handle: 'ostomy-care' },
-  { id: 'compression', label: 'Compression', icon: 'fitness', handle: 'compression-stockings' },
-  { id: 'daily', label: 'Daily Living', icon: 'heart', handle: 'daily-living' },
+  { id: 'wound', label: 'Wound Care', icon: 'bandage', handle: 'wound-care-supplies-singapore' },
+  { id: 'ostomy', label: 'Ostomy', icon: 'water', handle: 'ostomy-products' },
+  { id: 'compression', label: 'Compression', icon: 'fitness', handle: 'compression-stocking' },
+  { id: 'hygiene', label: 'Hygiene', icon: 'heart', handle: 'hygiene-and-infection-control' },
 ];
 
 export default function HomeScreen() {
@@ -76,8 +76,8 @@ export default function HomeScreen() {
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Shop by need</Text>
         <View style={styles.needGrid}>
           {SHOP_BY_NEED.map(need => (
-            <Link key={need.id} href={`/shop`} asChild>
-              <TouchableOpacity style={[styles.needTile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <Link key={need.id} href={{ pathname: '/shop', params: { category: need.handle } }} asChild>
+              <TouchableOpacity style={StyleSheet.flatten([styles.needTile, { backgroundColor: colors.surface, borderColor: colors.border }])}>
                 <View style={[styles.needIcon, { backgroundColor: colors.primaryLight }]}>
                   <Ionicons name={need.icon as any} size={22} color={colors.primary} />
                 </View>
@@ -89,7 +89,7 @@ export default function HomeScreen() {
 
         {/* AI Assistant card */}
         <Link href="/ai-assistant" asChild>
-          <TouchableOpacity style={[styles.aiCard, { backgroundColor: colors.primaryLight }]}>
+          <TouchableOpacity style={StyleSheet.flatten([styles.aiCard, { backgroundColor: colors.primaryLight }])}>
             <View style={[styles.aiIcon, { backgroundColor: colors.primary }]}>
               <Ionicons name="chatbubble" size={22} color="#fff" />
             </View>
@@ -103,9 +103,25 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </Link>
 
+        {/* Learn card */}
+        <Link href="/learn" asChild>
+          <TouchableOpacity style={StyleSheet.flatten([styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+            <View style={[styles.aiIcon, { backgroundColor: colors.accentLight }]}>
+              <Ionicons name="book" size={22} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={[styles.aiTitle, { color: colors.text }]}>Learn</Text>
+              <Text style={[styles.aiSubtitle, { color: colors.textSecondary }]}>
+                Plain-language guides on wound healing, stoma care and nutrition.
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </Link>
+
         {/* Rewards compact row */}
         <Link href="/account" asChild>
-          <TouchableOpacity style={[styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <TouchableOpacity style={StyleSheet.flatten([styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <Text style={[styles.pointsValue, { color: colors.text }]}>{profile?.points ?? 0}</Text>
@@ -150,7 +166,7 @@ export default function HomeScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
           {newProducts.length > 0 ? newProducts.map(p => (
             <Link key={p.id} href={`/product/${p.handle}`} asChild>
-              <TouchableOpacity style={[styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }])}>
                 {p.image ? (
                   <Image source={{ uri: p.image }} style={styles.productImage} resizeMode="contain" />
                 ) : (

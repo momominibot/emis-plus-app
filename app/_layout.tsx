@@ -36,6 +36,12 @@ function RootLayoutNav() {
         <Stack.Screen name="tools/intake-output" options={{ title: 'Intake & Output' }} />
         <Stack.Screen name="tools/vitals" options={{ title: 'Vitals Monitor' }} />
         <Stack.Screen name="tools/export" options={{ title: 'Export & Transfer' }} />
+        <Stack.Screen name="tools/wound-advisor" options={{ title: 'Wound Product Advisor' }} />
+        <Stack.Screen name="tools/peristomal" options={{ title: 'Stoma Skin Check' }} />
+        <Stack.Screen name="tools/hydration" options={{ title: 'Stoma Output & Hydration' }} />
+        <Stack.Screen name="tools/wound-nutrition" options={{ title: 'Wound Nutrition' }} />
+        <Stack.Screen name="guide/[slug]" options={{ title: 'Guide' }} />
+        <Stack.Screen name="orders" options={{ title: 'My Orders' }} />
       </Stack>
     </ThemeProvider>
   );

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
@@ -15,6 +16,9 @@ export default function AccountScreen() {
   const [showReferralInput, setShowReferralInput] = useState(false);
   const [referralInput, setReferralInput] = useState('');
   const [referralClaimed, setReferralClaimed] = useState(false);
+  // Inline feedback: Alert.alert does nothing in the web build.
+  const [referralMsg, setReferralMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const router = useRouter();
 
   useEffect(() => {
     loadData();
@@ -41,16 +45,23 @@ export default function AccountScreen() {
     if (result) {
       setReferralClaimed(true);
       setShowReferralInput(false);
-      Alert.alert('Bonus added', '100 welcome points have been added to your account.');
+      setReferralMsg({ ok: true, text: '100 welcome points have been added to your account.' });
       loadData();
     } else {
-      Alert.alert('Invalid code', 'This referral code is invalid, already used, or is your own code.');
+      setReferralMsg({ ok: false, text: 'This referral code is invalid, already used, or is your own code.' });
     }
+  }
+
+  async function shareCode() {
+    if (!profile?.referralCode) return;
+    try {
+      await Share.share({ message: `Join me on EMIS+ for wound, ostomy and compression supplies. Use my code ${profile.referralCode} and we both get 100 Health Points.` });
+    } catch { /* share sheet closed or unsupported */ }
   }
 
   const menuItems = [
     { icon: 'gift-outline', label: 'My Vouchers', action: () => {} },
-    { icon: 'cube-outline', label: 'Order History', action: () => {} },
+    { icon: 'cube-outline', label: 'Order History', action: () => router.push('/orders') },
     { icon: 'card-outline', label: 'Transaction History', action: () => {} },
     { icon: 'call-outline', label: 'Contact Us', action: () => {} },
     { icon: 'settings-outline', label: 'Settings', action: () => {} },
@@ -120,6 +131,17 @@ export default function AccountScreen() {
           <Text style={[styles.referralCode, { color: colors.primary }]}>{profile?.referralCode || '------'}</Text>
           <Text style={[styles.referralDesc, { color: colors.textSecondary }]}>
             Share with friends - you both get 100 bonus points
+          </Text>
+          <TouchableOpacity style={[styles.referralBtn, { backgroundColor: colors.primary }]} onPress={shareCode}>
+            <Text style={[styles.referralBtnText, { color: '#fff' }]}>Share my code</Text>
+          </TouchableOpacity>
+          {referralMsg && (
+            <Text style={{ marginTop: 10, fontSize: 14, fontWeight: '600', textAlign: 'center', color: referralMsg.ok ? colors.success : colors.danger }}>
+              {referralMsg.text}
+            </Text>
+          )}
+          <Text style={[styles.referralDesc, { color: colors.textTertiary, marginTop: 10 }]}>
+            Preview: points and referrals are saved on this device until EMIS+ accounts launch.
           </Text>
           {!referralClaimed && (
             <TouchableOpacity

@@ -1,16 +1,30 @@
-import { Product, Collection, Order } from './types';
+// Shopify Storefront API, tokenless access.
+//
+// Shopify lets a storefront read products, collections, search, pages, blogs
+// and articles with no access token at all (query complexity limit 1,000).
+// That means the app needs no secret: nothing in this file can be abused to
+// read customers, orders or change the store. Prices and stock come straight
+// from Shopify, never from the app.
+//
+// Docs: https://shopify.dev/docs/api/storefront (Authentication > Tokenless access)
 
-const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://backend-theta-ashen-89.vercel.app';
-const SHOPIFY_PROXY = BACKEND_URL + '/api/shopify';
+import { Product, Collection } from './types';
+import { getCategory, fallbackUrl } from './clinical/recommendations';
 
-async function adminQuery<T = any>(query: string, variables?: Record<string, unknown>): Promise<T> {
-  const res = await fetch(SHOPIFY_PROXY, {
+const SHOP_DOMAIN = process.env.EXPO_PUBLIC_SHOP_DOMAIN || '4a6920-67.myshopify.com';
+const API_VERSION = '2026-10';
+const STOREFRONT_URL = 'https://' + SHOP_DOMAIN + '/api/' + API_VERSION + '/graphql.json';
+
+export const STORE_URL = 'https://www.emis.asia';
+
+async function storefrontQuery<T = any>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  const res = await fetch(STOREFRONT_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
   });
   if (!res.ok) {
-    throw new Error('Shopify proxy error: HTTP ' + res.status);
+    throw new Error('Could not reach the EMIS+ store (HTTP ' + res.status + ')');
   }
   const json = await res.json();
   if (json.errors && json.errors.length) {
@@ -19,132 +33,155 @@ async function adminQuery<T = any>(query: string, variables?: Record<string, unk
   return json.data as T;
 }
 
-var PRODUCT_FIELDS = [
+const PRODUCT_FIELDS = [
   'id',
   'title',
   'description',
   'handle',
   'vendor',
   'tags',
+  'availableForSale',
+  'onlineStoreUrl',
   'featuredImage { url }',
-  'variants(first: 1) {',
-  '  edges {',
-  '    node {',
-  '      price { amount }',
-  '      compareAtPrice { amount }',
-  '    }',
-  '  }',
-  '}',
+  'variants(first: 1) { edges { node { price { amount } compareAtPrice { amount } } } }',
 ].join('\n');
 
+function money(amount: string | undefined | null): string | undefined {
+  if (amount == null) return undefined;
+  const n = Number(amount);
+  return Number.isFinite(n) ? n.toFixed(2) : undefined;
+}
+
 function mapProduct(node: any): Product {
-  var variant = node.variants && node.variants.edges && node.variants.edges[0] && node.variants.edges[0].node;
+  const variant = node.variants && node.variants.edges && node.variants.edges[0] && node.variants.edges[0].node;
   return {
     id: node.id,
     title: node.title,
-    description: (node.description && node.description.substring(0, 200)) || '',
+    description: node.description || '',
     handle: node.handle,
     vendor: node.vendor,
     tags: node.tags || [],
-    image: node.featuredImage && node.featuredImage.url,
-    price: (variant && variant.price && variant.price.amount) || '0',
-    compareAtPrice: (variant && variant.compareAtPrice && variant.compareAtPrice.amount) || undefined,
+    image: node.featuredImage ? node.featuredImage.url : undefined,
+    price: money(variant && variant.price && variant.price.amount) || '0.00',
+    compareAtPrice: money(variant && variant.compareAtPrice && variant.compareAtPrice.amount),
+    available: node.availableForSale !== false,
+    url: node.onlineStoreUrl || STORE_URL + '/products/' + node.handle,
   };
 }
 
+// Shop categories, curated to live emis.asia collections that hold products.
+// Checked against the Storefront API on 20 October 2026.
+export const SHOP_CATEGORIES: Collection[] = [
+  { id: 'wound', title: 'Wound care', handle: 'wound-care-supplies-singapore' },
+  { id: 'advanced', title: 'Advanced dressings', handle: 'advanced-wound-care' },
+  { id: 'ostomy', title: 'Ostomy', handle: 'ostomy-products' },
+  { id: 'ostomy-acc', title: 'Ostomy accessories', handle: 'ostomy-accessories' },
+  { id: 'compression', title: 'Compression', handle: 'compression-stocking' },
+  { id: 'skin', title: 'Skin protection', handle: 'wound-care-accessories-skin-protection' },
+  { id: 'hygiene', title: 'Hygiene', handle: 'hygiene-and-infection-control' },
+  { id: 'supplements', title: 'Supplements', handle: 'health-supplement' },
+];
+
 export async function getCollections(): Promise<Collection[]> {
-  var data = await adminQuery<{ collections: any }>(
-    'query GetCollections { collections(first: 20, query: "-title:Home page") { edges { node { id title handle image { url } } } } }'
-  );
-  return data.collections.edges.map(function(e: any) {
-    return {
-      id: e.node.id,
-      title: e.node.title,
-      handle: e.node.handle,
-      image: e.node.image && e.node.image.url,
-      productCount: 0,
-    };
-  });
+  return SHOP_CATEGORIES;
 }
 
 export async function getProducts(collectionHandle?: string): Promise<Product[]> {
   if (collectionHandle) {
-    var data = await adminQuery<{ collectionByHandle: any }>(
-      'query GetCollectionProducts($handle: String!) { collectionByHandle(handle: $handle) { products(first: 50) { edges { node { ' + PRODUCT_FIELDS + ' } } } } }',
+    const data = await storefrontQuery<{ collection: any }>(
+      'query CollectionProducts($handle: String!) { collection(handle: $handle) { products(first: 50) { edges { node { ' + PRODUCT_FIELDS + ' } } } } }',
       { handle: collectionHandle }
     );
-    var edges = (data.collectionByHandle && data.collectionByHandle.products && data.collectionByHandle.products.edges) || [];
+    const edges = (data.collection && data.collection.products && data.collection.products.edges) || [];
     return edges.map(function(e: any) { return mapProduct(e.node); });
   }
-  var dataAll = await adminQuery<{ products: any }>(
-    'query GetProducts { products(first: 50, sortKey: UPDATED_AT, reverse: true) { edges { node { ' + PRODUCT_FIELDS + ' } } } }'
+  const dataAll = await storefrontQuery<{ products: any }>(
+    'query Products { products(first: 50, sortKey: BEST_SELLING) { edges { node { ' + PRODUCT_FIELDS + ' } } } }'
   );
   return dataAll.products.edges.map(function(e: any) { return mapProduct(e.node); });
 }
 
 export async function getProductByHandle(handle: string): Promise<Product | null> {
-  var data = await adminQuery<{ productByHandle: any }>(
-    'query GetProduct($handle: String!) { productByHandle(handle: $handle) { ' + PRODUCT_FIELDS + ' } }',
+  const data = await storefrontQuery<{ product: any }>(
+    'query Product($handle: String!) { product(handle: $handle) { ' + PRODUCT_FIELDS + ' } }',
     { handle }
   );
-  return data.productByHandle ? mapProduct(data.productByHandle) : null;
+  return data.product ? mapProduct(data.product) : null;
 }
 
 export async function getNewProducts(limit = 8): Promise<Product[]> {
-  var data = await adminQuery<{ products: any }>(
-    'query GetNewProducts($limit: Int!) { products(first: $limit, sortKey: UPDATED_AT, reverse: true) { edges { node { ' + PRODUCT_FIELDS + ' } } } }',
+  const data = await storefrontQuery<{ products: any }>(
+    'query NewProducts($limit: Int!) { products(first: $limit, sortKey: CREATED_AT, reverse: true) { edges { node { ' + PRODUCT_FIELDS + ' } } } }',
     { limit }
   );
   return data.products.edges.map(function(e: any) { return mapProduct(e.node); });
 }
 
-export async function getCustomerOrders(customerId: string): Promise<Order[]> {
-  var query = [
-    'query GetCustomerOrders($customerId: ID!) {',
-    '  customer(id: $customerId) {',
-    '    orders(first: 20, reverse: true) {',
-    '      edges {',
-    '        node {',
-    '          id name createdAt displayFinancialStatus displayFulfillmentStatus',
-    '          totalPriceSet { shopMoney { amount } }',
-    '          lineItems(first: 10) { edges { node { title quantity } } }',
-    '          fulfillments(first: 5) { trackingInfo { number company } }',
-    '        }',
-    '      }',
-    '    }',
-    '  }',
-    '}',
-  ].join('\n');
-  var data = await adminQuery<{ customer: any }>(query, { customerId: customerId });
-  var edges = (data.customer && data.customer.orders && data.customer.orders.edges) || [];
-  return edges.map(function(e: any) {
-    var o = e.node;
-    var fulfillment = o.fulfillments && o.fulfillments[0];
-    var tracking = fulfillment && fulfillment.trackingInfo && fulfillment.trackingInfo[0];
-    var fulfillStatus = o.displayFulfillmentStatus;
-    var status: Order['status'] = 'pending';
-    if (fulfillStatus === 'FULFILLED') status = 'delivered';
-    else if (fulfillStatus === 'PARTIAL') status = 'shipped';
-    else if (o.displayFinancialStatus === 'PAID') status = 'paid';
-    return {
-      id: o.id,
-      orderNumber: o.name,
-      date: o.createdAt,
-      status: status,
-      trackingNumber: tracking && tracking.number,
-      trackingCompany: tracking && tracking.company,
-      total: (o.totalPriceSet && o.totalPriceSet.shopMoney && o.totalPriceSet.shopMoney.amount) || '0',
-      items: o.lineItems.edges.map(function(li: any) {
-        return { title: li.node.title, quantity: li.node.quantity };
-      }),
-    };
-  });
-}
-
-export async function searchProducts(query: string): Promise<Product[]> {
-  var data = await adminQuery<{ products: any }>(
-    'query SearchProducts($query: String!) { products(first: 20, query: $query) { edges { node { ' + PRODUCT_FIELDS + ' } } } }',
-    { query: query }
+export async function searchProducts(query: string, limit = 20): Promise<Product[]> {
+  const data = await storefrontQuery<{ products: any }>(
+    'query Search($query: String!, $limit: Int!) { products(first: $limit, query: $query) { edges { node { ' + PRODUCT_FIELDS + ' } } } }',
+    { query, limit }
   );
   return data.products.edges.map(function(e: any) { return mapProduct(e.node); });
+}
+
+// Products for a clinical recommendation tag (wound advisor, skin check,
+// nutrition). Curated collection first, topped up by search, in stock only.
+export async function getProductsForTag(tag: string, limit = 6): Promise<{ heading: string; products: Product[]; moreUrl: string } | null> {
+  const category = getCategory(tag);
+  if (!category) return null;
+  const seen = new Set<string>();
+  const out: Product[] = [];
+  function add(list: Product[]) {
+    for (const p of list) {
+      if (out.length >= limit) return;
+      if (!p.available || seen.has(p.id)) continue;
+      seen.add(p.id);
+      out.push(p);
+    }
+  }
+  if (category.collectionHandle) {
+    try { add(await getProducts(category.collectionHandle)); } catch { /* fall through to search */ }
+  }
+  if (out.length < limit && category.query) {
+    try { add(await searchProducts(category.query, limit * 2)); } catch { /* show link only */ }
+  }
+  return { heading: category.heading, products: out, moreUrl: fallbackUrl(category) };
+}
+
+// --- Education: emis.asia blog articles ---
+
+export interface BlogArticle {
+  id: string;
+  title: string;
+  handle: string;
+  excerpt: string;
+  image?: string;
+  publishedAt: string;
+  url: string;
+}
+
+export const EDUCATION_BLOGS = [
+  { handle: 'top-tips-for-effective-wound-care-dressings', title: 'Wound care tips' },
+  { handle: 'stoma-ostomy-care', title: 'Stoma & ostomy tips' },
+];
+
+export async function getBlogArticles(blogHandle: string, limit = 10): Promise<BlogArticle[]> {
+  const data = await storefrontQuery<{ blog: any }>(
+    'query Blog($handle: String!, $limit: Int!) { blog(handle: $handle) { articles(first: $limit, sortKey: PUBLISHED_AT, reverse: true) { edges { node { id title handle excerpt publishedAt onlineStoreUrl image { url } } } } } }',
+    { handle: blogHandle, limit }
+  );
+  const edges = (data.blog && data.blog.articles && data.blog.articles.edges) || [];
+  return edges.map(function(e: any) {
+    const a = e.node;
+    return {
+      id: a.id,
+      title: a.title,
+      handle: a.handle,
+      excerpt: (a.excerpt || '').replace(/\s+/g, ' ').trim(),
+      image: a.image ? a.image.url : undefined,
+      publishedAt: a.publishedAt,
+      url: a.onlineStoreUrl || STORE_URL + '/blogs/' + blogHandle + '/' + a.handle,
+    };
+  });
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, TextInput, FlatList } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
@@ -20,10 +20,18 @@ export default function ShopScreen() {
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
 
+  const { category } = useLocalSearchParams<{ category?: string }>();
+
   useEffect(() => {
     loadCollections();
-    loadProducts();
   }, []);
+
+  // Home's "Shop by need" tiles open this tab with ?category=<collection handle>
+  useEffect(() => {
+    const handle = typeof category === 'string' && category ? category : null;
+    setActiveCategory(handle);
+    loadProducts(handle || undefined);
+  }, [category]);
 
   async function loadCollections() {
     try {
@@ -93,7 +101,7 @@ export default function ShopScreen() {
         )}
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScroll}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryBar} contentContainerStyle={styles.categoryScroll}>
         <TouchableOpacity
           style={[styles.categoryChip, { backgroundColor: !activeCategory ? colors.primary : colors.surfaceSunken, borderColor: !activeCategory ? colors.primary : colors.border }]}
           onPress={() => selectCategory('')}
@@ -127,7 +135,7 @@ export default function ShopScreen() {
         columnWrapperStyle={{ gap: 12 }}
         renderItem={({ item }) => (
           <Link href={`/product/${item.handle}`} asChild>
-            <TouchableOpacity style={[styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }])}>
               {item.image ? (
                 <Image source={{ uri: item.image }} style={styles.productImage} resizeMode="contain" />
               ) : (
@@ -175,6 +183,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 26, fontWeight: '700', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
   searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 14, height: 52, borderRadius: 12, borderWidth: 1.5, gap: 10 },
   searchInput: { flex: 1, fontSize: 16 },
+  categoryBar: { flexGrow: 0, flexShrink: 0 },
   categoryScroll: { paddingHorizontal: 20, paddingVertical: 10, gap: 8 },
   categoryChip: { paddingHorizontal: 16, height: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   categoryText: { fontSize: 14, fontWeight: '600' },

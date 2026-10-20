@@ -7,15 +7,19 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 ### 5 Tabs
 1. **Home** - Health points balance, tier badge, vouchers, promotions carousel, new arrivals, AI assistant entry
 2. **Shop** - Category browsing, product search, product grid, synced to Shopify
-3. **Orders** - Order history with fulfillment status and tracking numbers
-4. **Tools** - Local-only medical tools (never uploaded):
+3. **Learn** - Six patient guides (wound healing, stoma care, nutrition and hydration), each with its clinical sources, plus the latest wound and stoma articles from the emis.asia blog
+4. **Tools** - Guided checks and local-only medical records (never uploaded):
+   - Wound Product Advisor (5 questions to a dressing type, care steps, referral urgency)
+   - Stoma Skin Check (Ostomy Skin Tool DET score)
+   - Stoma Output & Hydration check, St Mark's solution, food tips
+   - Wound Nutrition calculator (protein, energy, fluid)
    - Compression stocking measurement calculator
    - Wound tracker with measurements
    - Ostomy output log
    - Intake & output chart
    - Vitals monitor (BP, HR, temp, SpO2, blood sugar, weight)
    - Export to doctor (CSV/summary) and device-to-device transfer
-5. **Account** - Member tier (Silver/Gold/Diamond), points history, referral code, vouchers, settings
+5. **Account** - Member tier (Silver/Gold/Diamond), points history, referral code with sharing, vouchers, order history link (orders need sign-in, not connected yet)
 
 ### AI Product Assistant
 - Chat-based product selection helper
@@ -30,7 +34,7 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 
 ## Tech Stack
 - **Frontend**: React Native + Expo SDK 57 + Expo Router (TypeScript)
-- **Commerce**: Shopify Admin API (products, collections, orders)
+- **Commerce**: Shopify Storefront API with tokenless access (products, collections, search, blog articles). No API key in the app or backend; checkout happens on emis.asia
 - **Local Storage**: expo-sqlite (medical data, 100% on-device)
 - **Backend**: Vercel serverless functions (AI proxy, loyalty, Shopify webhooks)
 - **AI**: Volcengine Ark (Doubao) via backend proxy
@@ -52,6 +56,13 @@ Create `.env` in the app root (client-side only, no secrets):
 EXPO_PUBLIC_BACKEND_URL=https://your-backend.vercel.app
 ```
 All Shopify and AI API keys live only on the backend (Vercel env vars). Never put secrets in `EXPO_PUBLIC_` variables.
+
+## Web preview (GitHub Pages)
+
+```bash
+scripts/deploy-web.sh
+```
+Builds a single-page web export (`experiments.baseUrl` is `/emis-plus-app`), copies `index.html` to `404.html` so deep links work, and adds one commit to the `gh-pages` branch. On the web, medical records use `lib/db.web.ts` (browser localStorage) because expo-sqlite needs cross-origin isolation headers that GitHub Pages cannot send.
 
 ## Backend Deployment
 

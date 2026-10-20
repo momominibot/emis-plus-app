@@ -7,10 +7,19 @@ import { useColorScheme } from '@/components/useColorScheme';
 
 const TOOL_GROUPS = [
   {
+    title: 'Check & choose',
+    tools: [
+      { id: 'wound-advisor', title: 'Wound Product Advisor', desc: 'Find the right dressing in 5 questions', icon: 'bandage', route: '/tools/wound-advisor' },
+      { id: 'peristomal', title: 'Stoma Skin Check', desc: 'Score the skin around your stoma', icon: 'shield-checkmark', route: '/tools/peristomal' },
+      { id: 'hydration', title: 'Stoma Output & Hydration', desc: 'Check output and signs of dehydration', icon: 'water', route: '/tools/hydration' },
+      { id: 'wound-nutrition', title: 'Wound Nutrition', desc: 'Daily protein, energy and fluid targets', icon: 'nutrition', route: '/tools/wound-nutrition' },
+    ],
+  },
+  {
     title: 'Record',
     tools: [
-      { id: 'wound', title: 'Wound Tracker', desc: 'Log measurements & photos', icon: 'bandage', route: '/tools/wound' },
-      { id: 'ostomy', title: 'Ostomy Log', desc: 'Track output & changes', icon: 'water', route: '/tools/ostomy' },
+      { id: 'wound', title: 'Wound Tracker', desc: 'Log measurements & photos', icon: 'clipboard', route: '/tools/wound' },
+      { id: 'ostomy', title: 'Ostomy Log', desc: 'Track output & changes', icon: 'list', route: '/tools/ostomy' },
       { id: 'intake-output', title: 'Intake & Output', desc: 'Record fluids in and out', icon: 'canteen', route: '/tools/intake-output' },
       { id: 'vitals', title: 'Vitals Monitor', desc: 'BP, HR, temp, SpO2, sugar', icon: 'pulse', route: '/tools/vitals' },
     ],
@@ -52,7 +61,7 @@ export default function ToolsScreen() {
             <View style={{ marginHorizontal: 20, gap: 10 }}>
               {group.tools.map(tool => (
                 <Link key={tool.id} href={tool.route as any} asChild>
-                  <TouchableOpacity style={[styles.toolRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <TouchableOpacity style={StyleSheet.flatten([styles.toolRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
                     <View style={[styles.toolIcon, { backgroundColor: colors.primaryLight }]}>
                       <Ionicons name={tool.icon as any} size={24} color={colors.primary} />
                     </View>

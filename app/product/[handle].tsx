@@ -27,7 +27,7 @@ export default function ProductDetailScreen() {
   }
 
   function buyNow() {
-    Linking.openURL(`https://emis.asia/products/${handle}`);
+    Linking.openURL(product?.url || `https://www.emis.asia/products/${handle}`);
   }
 
   if (loading) {
@@ -53,7 +53,7 @@ export default function ProductDetailScreen() {
       <Stack.Screen options={{ title: product.title }} />
       <ScrollView>
         {product.image ? (
-          <Image source={{ uri: product.image }} style={styles.image} />
+          <Image source={{ uri: product.image }} style={styles.image} resizeMode="contain" />
         ) : (
           <View style={[styles.image, { backgroundColor: colors.border }]} />
         )}
@@ -86,8 +86,8 @@ export default function ProductDetailScreen() {
         <View>
           <Text style={[styles.bottomPrice, { color: colors.text }]}>S${product.price}</Text>
         </View>
-        <TouchableOpacity style={[styles.buyBtn, { backgroundColor: colors.primary }]} onPress={buyNow}>
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Buy on EMIS+</Text>
+        <TouchableOpacity style={[styles.buyBtn, { backgroundColor: product.available === false ? colors.textTertiary : colors.primary }]} onPress={buyNow}>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{product.available === false ? 'Sold out: view on EMIS+' : 'Buy on EMIS+'}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

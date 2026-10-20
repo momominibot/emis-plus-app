@@ -10,6 +10,10 @@ export interface Product {
   handle: string;
   tags: string[];
   vendor: string;
+  /** False when every variant is sold out. */
+  available?: boolean;
+  /** Product page on emis.asia, where checkout happens. */
+  url?: string;
 }
 
 export interface Collection {
