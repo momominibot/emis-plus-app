@@ -20,7 +20,9 @@ git fetch -q origin gh-pages
 TMP=$(mktemp -d)
 trap 'git worktree remove --force "$TMP" >/dev/null 2>&1 || true' EXIT
 git worktree add -q --detach "$TMP" origin/gh-pages
-rsync -a --delete --exclude .git dist/ "$TMP"/
+# Keep earlier JS bundles: GitHub's CDN can serve a cached 404.html/index.html
+# for ~10 minutes that still points at the previous bundle.
+rsync -a --delete --exclude .git --filter='P _expo/static/js/**' dist/ "$TMP"/
 cd "$TMP"
 git add -A
 if git diff --cached --quiet; then
