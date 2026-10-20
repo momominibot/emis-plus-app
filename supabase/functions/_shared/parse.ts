@@ -133,7 +133,7 @@ export type RefundParse =
  * refunded merchandise against its order (loyalty.refund_merchandise_cents):
  * refunded items and their tax (shop money), money returned to the customer
  * (successful or pending, in its own currency) and refunded shipping,
- * shipping tax and duties (shop money).
+ * shipping tax, duties and extra fees (shop money).
  */
 export function parseRefund(payload: unknown, opts: { currency: string }): RefundParse {
   const refund = obj(payload);
@@ -169,10 +169,11 @@ export function parseRefund(payload: unknown, opts: { currency: string }): Refun
       txCents += moneyToCents(tx.amount);
     }
 
-    let otherCents = shopCents(refund.total_duties_set);
+    let otherCents = shopCents(refund.total_duties_set) + shopCents(refund.total_additional_fees_set);
     for (const raw of Array.isArray(refund.refund_shipping_lines) ? refund.refund_shipping_lines : []) {
       const line = obj(raw);
-      otherCents += shopCents(line?.subtotal_amount_set) + shopCents(line?.tax_amount_set);
+      const shipping = shopCents(line?.subtotal_amount_set);
+      otherCents += shipping + (line?.tax_amount_set ? shopCents(line.tax_amount_set) : shippingTaxShare(obj(line?.shipping_line), shipping, shopCents));
     }
     // Before API 2024-10 refunded shipping came as an order adjustment.
     for (const raw of Array.isArray(refund.order_adjustments) ? refund.order_adjustments : []) {
@@ -187,3 +188,17 @@ export function parseRefund(payload: unknown, opts: { currency: string }): Refun
 }
 
 class CurrencyError extends Error {}
+
+/**
+ * Tax on a refunded shipping line when the payload has no tax amount for
+ * the refund itself: the shipping line's tax, pro rata to the part of its
+ * price that was refunded.
+ */
+function shippingTaxShare(shippingLine: Obj | null, refundedCents: number, shopCents: (set: unknown) => number): number {
+  if (!shippingLine || refundedCents <= 0) return 0;
+  const price = shopCents(shippingLine.price_set);
+  let tax = 0;
+  for (const raw of Array.isArray(shippingLine.tax_lines) ? shippingLine.tax_lines : []) tax += shopCents(obj(raw)?.price_set);
+  if (!price || !tax) return 0;
+  return Math.round((tax * Math.min(refundedCents, price)) / price);
+}

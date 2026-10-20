@@ -123,6 +123,37 @@ async function commit(next: Session | null, ifGeneration?: number): Promise<bool
   return true;
 }
 
+/** Takes on a session another tab wrote, without writing it back. */
+function adopt(stored: Session | null) {
+  generation++;
+  current = stored;
+  emit();
+}
+
+/**
+ * Web: one tab at a time may refresh, sign in or sign out (Web Locks API),
+ * so a refresh in one tab cannot write back an account another tab just
+ * signed out of. Native has one JS context and needs no lock.
+ */
+function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = Platform.OS === 'web' && typeof navigator !== 'undefined'
+    ? (navigator as unknown as { locks?: { request(name: string, cb: () => Promise<T>): Promise<T> } }).locks
+    : undefined;
+  return locks ? locks.request('emis.auth', fn) : fn();
+}
+
+/** Which customer a session belongs to (Shopify customer ID, else the id_token subject). */
+function accountOf(s: Session): string {
+  if (s.customer?.id) return s.customer.id;
+  try {
+    const sub = decodeJwtPayload(s.idToken).sub;
+    if (typeof sub === 'string' && sub) return 'sub:' + sub;
+  } catch {
+    // fall through
+  }
+  return 'id:' + s.idToken;
+}
+
 // Web: another tab signed in or out. Follow it instead of using stale tokens.
 if (Platform.OS === 'web' && typeof window !== 'undefined' && SIGN_IN_AVAILABLE) {
   window.addEventListener('storage', (e) => {
@@ -235,11 +266,14 @@ async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
   } catch {
     pending = null;
   }
-  // One use only, and only by the redirect it belongs to: a stray or old
-  // callback must not destroy a sign-in that is still in progress.
-  if (pending && params.state === pending.state) await authStorage.remove(KEYS.pending);
   try {
     const d = await getDiscovery();
+    // One use only, and only by the redirect it belongs to (same state, same
+    // issuer): a stray or forged callback must not destroy a sign-in that is
+    // still in progress.
+    if (pending && params.state === pending.state && (!params.iss || params.iss === d.issuer)) {
+      await authStorage.remove(KEYS.pending);
+    }
     const check = checkRedirect(params, pending, d.issuer, Date.now());
     if (!check.ok) return check;
     const p = pending as PendingSignIn;
@@ -260,7 +294,9 @@ async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
       expiresAt: Date.now() + t.expires_in * 1000,
       customer: await fetchCustomerSummary(d.graphqlApi, t.access_token).catch(() => null),
     };
-    if (!(await commit(session, gen))) return { ok: false, message: 'Sign-in was interrupted. Please try again.' };
+    if (!(await withAuthLock(() => commit(session, gen)))) {
+      return { ok: false, message: 'Sign-in was interrupted. Please try again.' };
+    }
     completedState = params.state || null;
     return { ok: true };
   } catch (err) {
@@ -268,45 +304,61 @@ async function finishSignIn(params: RedirectParams): Promise<SignInResult> {
   }
 }
 
-let refreshing: Promise<Session | null> | null = null;
+let refreshing: Promise<void> | null = null;
 
 // OAuth errors that mean the refresh token itself is no longer valid.
 const DEAD_GRANT = new Set(['invalid_grant', 'invalid_client', 'unauthorized_client', 'unsupported_grant_type']);
 
-async function refresh(s: Session): Promise<Session | null> {
-  const gen = generation;
-  if (!s.refreshToken) {
-    await commit(null, gen);
-    return current;
-  }
-  try {
-    const d = await getDiscovery();
-    const t = await tokenRequest(d.tokenEndpoint, { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: s.refreshToken });
-    const next: Session = {
-      ...s,
-      accessToken: t.access_token,
-      refreshToken: t.refresh_token ?? s.refreshToken,
-      idToken: t.id_token ?? s.idToken,
-      expiresAt: Date.now() + t.expires_in * 1000,
-    };
-    return (await commit(next, gen)) ? next : current;
-  } catch (err) {
-    if (err instanceof TokenError && (err.status === 400 || err.status === 401) && DEAD_GRANT.has(err.code ?? '')) {
-      await commit(null, gen); // refresh token rejected: signed out
-      return current;
+async function refresh(s: Session): Promise<void> {
+  await withAuthLock(async () => {
+    if (Platform.OS === 'web') {
+      // Another tab may have refreshed, signed out or signed in meanwhile.
+      const stored = await readStored();
+      if (!stored || stored.accessToken !== s.accessToken || stored.refreshToken !== s.refreshToken) {
+        adopt(stored);
+        return;
+      }
     }
-    throw err; // offline or throttled: keep the session, the caller shows an error
-  }
+    if (current !== s) return; // changed in this tab while we waited
+    const gen = generation;
+    if (!s.refreshToken) {
+      await commit(null, gen);
+      return;
+    }
+    try {
+      const d = await getDiscovery();
+      const t = await tokenRequest(d.tokenEndpoint, { grant_type: 'refresh_token', client_id: CLIENT_ID, refresh_token: s.refreshToken });
+      await commit({
+        ...s,
+        accessToken: t.access_token,
+        refreshToken: t.refresh_token ?? s.refreshToken,
+        idToken: t.id_token ?? s.idToken,
+        expiresAt: Date.now() + t.expires_in * 1000,
+      }, gen);
+    } catch (err) {
+      if (err instanceof TokenError && (err.status === 400 || err.status === 401) && DEAD_GRANT.has(err.code ?? '')) {
+        await commit(null, gen); // refresh token rejected: signed out
+        return;
+      }
+      throw err; // offline or throttled: keep the session, the caller shows an error
+    }
+  });
 }
 
-/** A valid access token, refreshed if it expires within a minute; null when signed out. */
+/**
+ * A valid access token for the account that is signed in when this is
+ * called, refreshed if it expires within a minute. Null when signed out, or
+ * when the account changed meanwhile: work started for one customer never
+ * continues with another customer's token.
+ */
 export async function getAccessToken(): Promise<string | null> {
   const s = await loadSession();
   if (!s) return null;
   if (s.expiresAt - Date.now() > 60_000) return s.accessToken;
   if (!refreshing) refreshing = refresh(s).finally(() => (refreshing = null));
-  const next = await refreshing;
-  return next?.accessToken ?? null;
+  await refreshing;
+  const now = current as Session | null;
+  return now && accountOf(now) === accountOf(s) && now.expiresAt - Date.now() > 60_000 ? now.accessToken : null;
 }
 
 /** Called when Shopify rejects a token: sign out, unless the session has moved on since. */
@@ -316,7 +368,7 @@ export async function expireSession(rejectedToken: string): Promise<void> {
 
 export async function signOut(): Promise<void> {
   const s = await loadSession();
-  await commit(null);
+  await withAuthLock(() => commit(null));
   if (!s) return;
   try {
     const d = await getDiscovery();

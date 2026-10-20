@@ -28,6 +28,9 @@ export default function OrdersScreen() {
   const { session, ready } = useSession();
   const key = sessionKey(session);
   const keyRef = useRef(key);
+  // Bumped by every fresh load; an older "show more" response is then dropped
+  // instead of being appended to the new first page.
+  const requestRef = useRef(0);
   // Results are stored with the account they belong to and only shown for it.
   const [result, setResult] = useState<{ owner: string; orders: CustomerOrder[]; nextCursor: string | null } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,10 +48,12 @@ export default function OrdersScreen() {
   const load = useCallback(async (more = false) => {
     if (!key) return;
     const askedFor = key;
+    const request = more ? requestRef.current : ++requestRef.current;
     setLoading(true);
     try {
       const page = await fetchOrders(more ? nextCursor : null);
-      if (keyRef.current !== askedFor) return; // signed out or switched while loading
+      // Signed out, switched account, or refreshed while this was loading.
+      if (keyRef.current !== askedFor || requestRef.current !== request) return;
       setResult((prev) => ({
         owner: askedFor,
         orders: more && prev?.owner === askedFor ? [...prev.orders, ...page.orders] : page.orders,
@@ -56,7 +61,7 @@ export default function OrdersScreen() {
       }));
       setError(null);
     } catch (err) {
-      if (keyRef.current !== askedFor) return;
+      if (keyRef.current !== askedFor || requestRef.current !== request) return;
       if (!(err instanceof NotSignedInError)) {
         setError({ owner: askedFor, message: err instanceof Error ? err.message : 'Could not load your orders.' });
       }

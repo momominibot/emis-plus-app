@@ -42,6 +42,9 @@ create table loyalty.orders (
   presentment_cents    bigint check (presentment_cents >= 0),
   presentment_currency text check (presentment_currency ~ '^[A-Z]{3}$'),
   taxes_included boolean not null default true,
+  -- Refund money already returned in the presentment currency, so each
+  -- conversion works on the running total and full refunds add up exactly.
+  refunded_presentment_cents bigint not null default 0 check (refunded_presentment_cents >= 0),
   multiplier_x10 integer not null check (multiplier_x10 in (10, 15, 20)),
   points_earned  integer not null check (points_earned >= 0),
   refunded_cents bigint not null default 0,
@@ -55,7 +58,7 @@ create index orders_customer_idx on loyalty.orders (customer_id);
 -- Refunds are stored as Shopify reported them, even before their order has
 -- been awarded (webhook order is not guaranteed); record_paid_order applies
 -- them later. The merchandise amount is worked out against the order when
--- applied (see refund_merchandise_cents) and kept in amount_cents.
+-- applied (see apply_refund) and kept in amount_cents.
 create table loyalty.refunds (
   refund_id      bigint primary key check (refund_id > 0),
   order_id       bigint not null check (order_id > 0),
@@ -63,7 +66,7 @@ create table loyalty.refunds (
   line_tax_cents bigint not null default 0 check (line_tax_cents >= 0), -- their tax, shop money
   tx_cents       bigint not null default 0 check (tx_cents >= 0),       -- money returned (successful or pending)
   tx_currency    text check (tx_currency ~ '^[A-Z]{3}$'),               -- null: shop currency
-  other_cents    bigint not null default 0 check (other_cents >= 0),    -- shipping, shipping tax, duties
+  other_cents    bigint not null default 0 check (other_cents >= 0),    -- shipping, shipping tax, duties, extra fees
   amount_cents   bigint check (amount_cents >= 0),
   applied        boolean not null default false,
   created_at     timestamptz not null default now()
@@ -212,38 +215,25 @@ begin
 end
 $$;
 
--- Merchandise refunded: the larger of the refunded items' subtotal and the
--- money returned minus shipping, duties and (for tax-exclusive prices) the
--- items' tax. Covers item refunds, amount-only refunds and refunds where
--- staff returned more than the items. Money returned in the customer's
--- currency is converted with the order's own exchange ratio; an unknown
--- currency falls back to the items' subtotal.
-create function loyalty.refund_merchandise_cents(r loyalty.refunds, o loyalty.orders) returns bigint
-language sql immutable set search_path = '' as $$
-  select greatest(
-    r.line_cents,
-    coalesce(
-      case
-        when r.tx_cents = 0 then 0
-        when r.tx_currency is null then r.tx_cents
-        when r.tx_currency = o.presentment_currency and o.presentment_cents > 0
-          then round(r.tx_cents::numeric * o.amount_cents / o.presentment_cents)::bigint
-      end
-      - r.other_cents
-      - case when o.taxes_included then 0 else r.line_tax_cents end,
-      0),
-    0)
-$$;
-
 -- Applies one stored refund to its awarded order. Caller holds lock_order
--- and the member row lock. Returns points clawed back, or null when the
+-- and the member row locks. Returns points clawed back, or null when the
 -- order has not been awarded yet (refund stays pending).
+--
+-- Merchandise refunded is the larger of the refunded items' subtotal and the
+-- money returned minus shipping, duties, extra fees and (for tax-exclusive
+-- prices) the items' tax. That covers item refunds, amount-only refunds and
+-- refunds where staff returned more than the items. Money returned in the
+-- customer's currency is converted with the order's own exchange ratio, on
+-- the running total so that refunding everything adds up to the whole order.
+-- An unknown currency falls back to the items' subtotal.
 create function loyalty.apply_refund(p_refund_id bigint) returns integer
 language plpgsql volatile set search_path = '' as $$
 declare
   r loyalty.refunds;
   o loyalty.orders;
   ref loyalty.referrals;
+  v_tx_shop bigint;
+  v_presentment_after bigint;
   v_amount bigint;
   v_refunded bigint;
   v_target integer;
@@ -258,7 +248,23 @@ begin
     return null;
   end if;
 
-  v_amount := loyalty.refund_merchandise_cents(r, o);
+  v_presentment_after := o.refunded_presentment_cents;
+  if r.tx_cents = 0 then
+    v_tx_shop := 0;
+  elsif r.tx_currency is null then
+    v_tx_shop := r.tx_cents;
+  elsif r.tx_currency = o.presentment_currency and o.presentment_cents > 0 then
+    v_presentment_after := o.refunded_presentment_cents + r.tx_cents;
+    v_tx_shop := round(v_presentment_after::numeric * o.amount_cents / o.presentment_cents)::bigint
+               - round(o.refunded_presentment_cents::numeric * o.amount_cents / o.presentment_cents)::bigint;
+  else
+    v_tx_shop := null;
+  end if;
+  v_amount := greatest(
+    r.line_cents,
+    coalesce(v_tx_shop - r.other_cents - case when o.taxes_included then 0 else r.line_tax_cents end, 0),
+    0);
+
   v_refunded := least(o.refunded_cents + v_amount, o.amount_cents);
   -- Clawback so far should equal what the refunded part earned, computed on
   -- the running total so repeated partial refunds never drift.
@@ -266,7 +272,8 @@ begin
   v_claw := greatest(v_target - o.points_clawed, 0);
 
   update loyalty.orders
-     set refunded_cents = v_refunded, points_clawed = points_clawed + v_claw
+     set refunded_cents = v_refunded, points_clawed = points_clawed + v_claw,
+         refunded_presentment_cents = v_presentment_after
    where order_id = o.order_id;
   update loyalty.members
      set total_spent_cents = greatest(total_spent_cents - (v_refunded - o.refunded_cents), 0), updated_at = now()

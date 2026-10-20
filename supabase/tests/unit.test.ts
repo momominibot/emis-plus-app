@@ -140,6 +140,20 @@ Deno.test('parseRefund reports items, tax, money returned and shipping separatel
     }, opts),
     { ok: true, ...ids, lineCents: 0, lineTaxCents: 0, txCents: 3000, txCurrency: 'USD', otherCents: 545 },
   );
+  // Extra fees are not merchandise; shipping tax comes from the shipping line when the refund has no tax amount.
+  assertEquals(
+    parseRefund({
+      ...base,
+      refund_line_items: [{ subtotal_set: money('20.00'), total_tax_set: money('0.00') }],
+      transactions: [{ kind: 'refund', status: 'success', amount: '40.90' }],
+      total_additional_fees_set: money('10.00'),
+      refund_shipping_lines: [{
+        subtotal_amount_set: money('10.00'),
+        shipping_line: { price_set: money('10.00'), tax_lines: [{ price_set: money('0.90') }] },
+      }],
+    }, opts),
+    { ok: true, ...ids, lineCents: 2000, lineTaxCents: 0, txCents: 4090, txCurrency: null, otherCents: 2090 },
+  );
   assertEquals(parseRefund({ ...base, refund_line_items: [{ subtotal_set: money('1.00', 'USD') }] }, opts), { ok: false, reason: 'ignored_currency' });
   assertEquals(
     parseRefund({ ...base, transactions: [{ kind: 'refund', status: 'success', amount: '1', currency: 'USD' }, { kind: 'refund', status: 'success', amount: '1', currency: 'SGD' }] }, opts),

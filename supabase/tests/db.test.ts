@@ -300,6 +300,20 @@ dbTest('refunds paid in the customer currency convert at the order rate', async 
   assertEquals((await refundParts(t, 2, 10, { txCents: 4000, txCurrency: 'EUR' })).clawed_back, 0);
 });
 
+dbTest('refunding a foreign-currency order in parts still adds up to a full refund', async (t) => {
+  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await t.db.recordPaidOrder({
+    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000,
+    presentmentCents: 7500, presentmentCurrency: 'USD', taxesIncluded: true,
+  }); // S$100 paid as US$75
+  for (const id of [1, 2, 3]) await refundParts(t, id, 10, { txCents: 2500, txCurrency: 'USD' });
+  const [o] = await t.sql`select refunded_cents::int as r, refunded_presentment_cents::int as p from loyalty.orders`;
+  assertEquals(o, { r: 10000, p: 7500 }); // per-part rounding would leave 9999
+  assertEquals((await member(t, 2)).referredStatus, 'reversed');
+  assertEquals(await points(t, 1), 0);
+  assertEquals(await points(t, 2), 0);
+});
+
 dbTest('tax-exclusive orders do not count item tax as merchandise', async (t) => {
   await t.db.recordPaidOrder({
     webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000, taxesIncluded: false,
