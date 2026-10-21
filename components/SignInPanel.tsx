@@ -1,5 +1,9 @@
 // Sign-in for EMIS+: a 6-digit code by email, plus Apple and Google when
 // they are switched on. Deliberately plain; the app's design pass restyles it.
+//
+// With `confirmEmail`, it instead asks an already signed-in member for a code
+// sent to their own address, which connects their emis.asia orders (needed
+// after a Google sign-in on an address Google does not run).
 
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, TextInput, Platform } from 'react-native';
@@ -11,9 +15,16 @@ import { sendEmailCode, signInWithApple, signInWithGoogle, verifyEmailCode, type
 
 const RESEND_AFTER_S = 60;
 
-export default function SignInPanel({ intro }: { intro?: string }) {
+interface Props {
+  intro?: string;
+  confirmEmail?: string;
+  onConfirmed?: () => void;
+}
+
+export default function SignInPanel({ intro, confirmEmail, onConfirmed }: Props) {
   const colors = Colors[useColorScheme()];
-  const [email, setEmail] = useState('');
+  const confirming = confirmEmail !== undefined;
+  const [email, setEmail] = useState(confirmEmail ?? '');
   const [code, setCode] = useState('');
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,8 +48,8 @@ export default function SignInPanel({ intro }: { intro?: string }) {
   }
 
   const sendCode = () =>
-    step(() => sendEmailCode(email), () => {
-      setCodeSentTo(email.trim());
+    step(() => sendEmailCode(confirmEmail ?? email), () => {
+      setCodeSentTo((confirmEmail ?? email).trim());
       setCode('');
       setWait(RESEND_AFTER_S);
       setMessage({ ok: true, text: 'We emailed you a 6-digit code. It can take a minute to arrive.' });
@@ -48,12 +59,19 @@ export default function SignInPanel({ intro }: { intro?: string }) {
 
   return (
     <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <Text style={[styles.title, { color: colors.text }]}>Sign in to EMIS+</Text>
+      <Text style={[styles.title, { color: colors.text }]}>{confirming ? 'Connect your emis.asia orders' : 'Sign in to EMIS+'}</Text>
       <Text style={[styles.body, { color: colors.textSecondary }]}>
-        {intro ?? 'Use the email address you shop with on emis.asia, so your orders and Health Points find you.'}
+        {intro ??
+          (confirming
+            ? `To show orders and Health Points for ${confirmEmail}, confirm it with a 6-digit code we email you.`
+            : 'Use the email address you shop with on emis.asia, so your orders and Health Points find you.')}
       </Text>
 
-      {codeSentTo === null ? (
+      {codeSentTo === null && confirming ? (
+        <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]} onPress={sendCode} disabled={busy}>
+          <Text style={styles.btnText}>{busy ? 'Sending...' : 'Email me a code'}</Text>
+        </TouchableOpacity>
+      ) : codeSentTo === null ? (
         <>
           <TextInput
             style={input}
@@ -85,19 +103,23 @@ export default function SignInPanel({ intro }: { intro?: string }) {
             autoComplete={Platform.OS === 'android' ? 'sms-otp' : 'one-time-code'}
             textContentType="oneTimeCode"
             maxLength={6}
-            onSubmitEditing={() => step(() => verifyEmailCode(codeSentTo, code))}
+            onSubmitEditing={() => step(() => verifyEmailCode(codeSentTo, code), onConfirmed)}
           />
           <TouchableOpacity
             style={[styles.btn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]}
-            onPress={() => step(() => verifyEmailCode(codeSentTo, code))}
+            onPress={() => step(() => verifyEmailCode(codeSentTo, code), onConfirmed)}
             disabled={busy}
           >
-            <Text style={styles.btnText}>{busy ? 'Checking...' : 'Sign in'}</Text>
+            <Text style={styles.btnText}>{busy ? 'Checking...' : confirming ? 'Confirm' : 'Sign in'}</Text>
           </TouchableOpacity>
           <View style={styles.row}>
-            <TouchableOpacity onPress={() => { setCodeSentTo(null); setMessage(null); }}>
-              <Text style={[styles.link, { color: colors.primary }]}>Use a different email</Text>
-            </TouchableOpacity>
+            {confirming ? (
+              <View />
+            ) : (
+              <TouchableOpacity onPress={() => { setCodeSentTo(null); setMessage(null); }}>
+                <Text style={[styles.link, { color: colors.primary }]}>Use a different email</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity onPress={sendCode} disabled={wait > 0 || busy}>
               <Text style={[styles.link, { color: wait > 0 ? colors.textTertiary : colors.primary }]}>
                 {wait > 0 ? `Send again in ${wait}s` : 'Send a new code'}
@@ -109,7 +131,7 @@ export default function SignInPanel({ intro }: { intro?: string }) {
 
       {message && <Text style={[styles.message, { color: message.ok ? colors.success : colors.danger }]}>{message.text}</Text>}
 
-      {(APPLE_ENABLED || GOOGLE_ENABLED) && (
+      {!confirming && (APPLE_ENABLED || GOOGLE_ENABLED) && (
         <>
           <Text style={[styles.or, { color: colors.textTertiary }]}>or</Text>
           {APPLE_ENABLED && <AppleSignInButton disabled={busy} onPress={() => step(signInWithApple)} />}

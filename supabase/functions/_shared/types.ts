@@ -40,6 +40,8 @@ export type ReferralOutcome =
 export interface Member {
   memberId: string;
   email: string;
+  /** This sign-in proved they control the mailbox (emailed code, or an address the provider owns). */
+  emailProven: boolean;
 }
 
 export interface LoyaltyDb {

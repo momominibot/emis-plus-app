@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertThrows } from 'jsr:@std/assert@1.0.13';
 import { idFrom, moneyToCents, normalizeEmail, parseJsonLossless, parsePaidOrder, parseRefund } from '../functions/_shared/parse.ts';
 import { handleShopifyWebhook, verifyShopifyHmac } from '../functions/_shared/webhook.ts';
-import { handleLoyaltyRequest, type AuthUser } from '../functions/_shared/api.ts';
+import { handleLoyaltyRequest, mailboxProven, type AuthUser } from '../functions/_shared/api.ts';
 import type { LoyaltyDb, Member, PaidOrderInput, RefundInput } from '../functions/_shared/types.ts';
 
 const SHOP = '4a6920-67.myshopify.com';
@@ -260,10 +260,11 @@ Deno.test('webhook: unknown topics are acknowledged; database failures ask Shopi
 
 const USER_A = '6f9619ff-8b86-d011-b42d-00c04fc964ff';
 const USERS: Record<string, AuthUser> = {
-  'token-a': { id: USER_A, email: 'Pat@Example.com', emailConfirmed: true },
-  'token-unconfirmed': { id: '11111111-1111-4111-8111-111111111111', email: 'new@example.com', emailConfirmed: false },
-  'token-no-email': { id: '22222222-2222-4222-8222-222222222222', email: null, emailConfirmed: true },
-  'token-bad-id': { id: 'not-a-uuid', email: 'x@example.com', emailConfirmed: true },
+  'token-a': { id: USER_A, email: 'Pat@Example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
+  'token-unconfirmed': { id: '11111111-1111-4111-8111-111111111111', email: 'new@example.com', emailConfirmed: false, methods: ['otp'], providers: ['email'] },
+  'token-no-email': { id: '22222222-2222-4222-8222-222222222222', email: null, emailConfirmed: true, methods: ['oauth'], providers: ['apple'] },
+  'token-bad-id': { id: 'not-a-uuid', email: 'x@example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
+  'token-google-work': { id: '33333333-3333-4333-8333-333333333333', email: 'pat@company.sg', emailConfirmed: true, methods: ['oauth'], providers: ['email', 'google'] },
 };
 
 function apiCfg(db: LoyaltyDb, getUser: (token: string) => Promise<AuthUser | null> = async (t) => USERS[t] ?? null) {
@@ -289,7 +290,7 @@ Deno.test('api: GET /me uses the user Supabase Auth returns, never ids from the 
   const res = await handleLoyaltyRequest(get('token-a', 'https://momominibot.github.io'), cfg);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get('access-control-allow-origin'), 'https://momominibot.github.io');
-  assertEquals(calls.members, [{ memberId: USER_A, email: 'pat@example.com' }]);
+  assertEquals(calls.members, [{ memberId: USER_A, email: 'pat@example.com', emailProven: true }]);
   assertEquals(seen, ['token-a']);
   assertEquals((await handleLoyaltyRequest(get('stolen'), cfg)).status, 401);
   assertEquals((await handleLoyaltyRequest(get(), cfg)).status, 401);
@@ -306,13 +307,35 @@ Deno.test('api: only confirmed emails reach the ledger', async () => {
   assertEquals(calls.members.length, 0);
 });
 
+Deno.test('api: mailbox proof comes from how the user signed in, not the provider flag', async () => {
+  const { db, calls } = fakeDb();
+  const { cfg } = apiCfg(db);
+  assertEquals((await handleLoyaltyRequest(get('token-google-work'), cfg)).status, 200);
+  assertEquals(calls.members, [{ memberId: '33333333-3333-4333-8333-333333333333', email: 'pat@company.sg', emailProven: false }]);
+  const u = (methods: string[], providers: string[], email: string): AuthUser =>
+    ({ id: USER_A, email, emailConfirmed: true, methods, providers });
+  const cases: [AuthUser, boolean][] = [
+    [u(['otp'], ['email'], 'pat@company.sg'), true], // emailed 6-digit code
+    [u(['magiclink'], ['email'], 'pat@company.sg'), true],
+    [u(['oauth'], ['google'], 'pat@gmail.com'), true], // Google runs the mailbox
+    [u(['oauth'], ['google'], 'pat@googlemail.com'), true],
+    [u(['oauth'], ['google'], 'pat@company.sg'), false], // Google only vouched for it once
+    [u(['oauth'], ['apple'], 'x1y2@privaterelay.appleid.com'), true],
+    [u(['oauth'], ['apple'], 'pat@icloud.com'), false],
+    [u(['oauth'], ['email', 'google'], 'pat@gmail.com'), true],
+    [u(['token_refresh'], ['email'], 'pat@company.sg'), false],
+    [u([], [], 'pat@gmail.com'), false],
+  ];
+  for (const [user, want] of cases) assertEquals(mailboxProven(user, user.email!), want, JSON.stringify(user));
+});
+
 Deno.test('api: referral claims go to the database as the signed-in member', async () => {
   const { db, calls } = fakeDb();
   const { cfg } = apiCfg(db);
   const post = (body: string, token = 'token-a') =>
     handleLoyaltyRequest(new Request('https://x/loyalty/referral', { method: 'POST', body, headers: { Authorization: 'Bearer ' + token } }), cfg);
   assertEquals((await post('{"code":"abcd2345"}')).status, 200);
-  assertEquals(calls.claims, [[{ memberId: USER_A, email: 'pat@example.com' }, 'abcd2345']]);
+  assertEquals(calls.claims, [[{ memberId: USER_A, email: 'pat@example.com', emailProven: true }, 'abcd2345']]);
   assertEquals((await post('{}')).status, 400);
   assertEquals((await post('not json')).status, 400);
   assertEquals((await post(JSON.stringify({ code: 'x'.repeat(2000) }))).status, 413);

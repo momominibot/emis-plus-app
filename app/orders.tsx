@@ -59,6 +59,11 @@ export default function OrdersScreen() {
         refreshControl={<RefreshControl refreshing={loading && membership !== null} onRefresh={reload} tintColor={colors.primary} />}
         ListHeaderComponent={
           <View style={{ gap: 8 }}>
+            {membership && !membership.ordersLinked && (
+              <View style={{ marginHorizontal: -20 }}>
+                <SignInPanel confirmEmail={membership.email} onConfirmed={reload} />
+              </View>
+            )}
             {error ? (
               <TouchableOpacity onPress={reload}>
                 <Text style={[styles.body, { color: colors.danger, textAlign: 'left' }]}>{error} Tap to retry.</Text>

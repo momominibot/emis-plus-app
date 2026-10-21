@@ -28,9 +28,19 @@ Edge function `shopify-webhook` ◀── Shopify orders/paid, refunds/create (H
   - Redirect sign-ins use PKCE. Web returns to `/auth/callback`, native to `emisapp://auth/callback`.
   - Sessions: AsyncStorage on native, localStorage on web, refreshed by supabase-js (paused in the background on native).
 - **Identity link**: a member is a Supabase user. Orders carry the Shopify order email; they are matched to
-  the member whose *confirmed* email is the same. Orders placed before the customer signs up wait and are
-  awarded the next time they open the app. `members.shopify_customer_id` is filled from matched orders so a
-  later migration can link by Shopify customer ID.
+  the member holding that email as a *proven* binding. Proof means the member showed they read the mailbox:
+  they signed in with an emailed code (the access token's `amr` says `otp`, `magiclink` and similar), or their
+  address is one the provider itself runs (`gmail.com`/`googlemail.com` with Google, Apple's private relay
+  with Apple). A Google or Apple "verified" flag alone is not enough: a Google account can keep a company
+  address after that mailbox has changed hands. A member without proof sees "Connect your emis.asia orders"
+  and confirms with a 6-digit code sent to their own address; proof then stays until the email changes.
+  - A trigger on `auth.users` keeps the binding in step with Supabase Auth: an email change moves it to the
+    new (confirmed) address at once and a deleted user releases it, so the old address cannot collect orders.
+  - Before rebinding, the database checks the address against `auth.users`, so a request that read the old
+    email a moment before a change cannot undo it.
+  - Orders placed before the customer signs up (or proves the address) wait and are awarded the next time they
+    open the app. `members.shopify_customer_id` is filled from matched orders so a later migration can link by
+    Shopify customer ID.
 - **Orders screen**: lists the member's matched paid orders from our own table (no Shopify customer API),
   with points per order and a link to emis.asia for full details and tracking.
 - No Admin API token or other private Shopify token is used anywhere. Catalogue reads stay on tokenless
@@ -62,7 +72,9 @@ reverse lookup from a referral code to its owner: unique constraints, row locks 
    ovumind, active; ranklore-dashboard and "momominibot's Project", paused). Either point to the existing one or
    create `emis` in `ap-southeast-1` (paid; confirm cost). Everything below lives in that project.
 2. **Database.** Apply `supabase/migrations/20261020120000_loyalty.sql` as the `postgres` role (dry run inside
-   `begin; ... rollback;` first). Optionally import earlier customers: `insert into loyalty.prior_customers` the
+   `begin; ... rollback;` first). It adds an `after update of email or delete` trigger on `auth.users`
+   (`loyalty_sync_email`); the dry run should confirm it is created. If that trigger ever errored, Supabase
+   Auth email changes and user deletions would fail with it, so it is kept to two small updates. Optionally import earlier customers: `insert into loyalty.prior_customers` the
    lowercased emails of a Shopify customer export with orders, so they cannot claim referral bonuses as "new".
 3. **Edge functions.** Deploy `shopify-webhook` and `loyalty` with `verify_jwt = false` (both authenticate in code).
    Secrets: `SHOPIFY_WEBHOOK_SECRET`, `LOYALTY_ALLOWED_ORIGINS=https://momominibot.github.io`.
@@ -100,7 +112,13 @@ reverse lookup from a referral code to its owner: unique constraints, row locks 
 ## Known limits and follow-ups
 
 - Apple "Hide My Email" relay addresses will not match orders placed with the customer's real email; those
-  customers should sign in with email or Google, or use the same address at checkout.
+  customers should sign in with email or Google, or use the same address at checkout. Apple users who share a
+  real address are asked to confirm it with a code, like Google users on non-Gmail addresses.
+- Supabase links a Google sign-in to an existing user with the same verified email. Someone who once controlled
+  a company mailbox and made a Google account on it could therefore sign in to the account of whoever holds that
+  address now. That is Supabase Auth behaviour, outside the ledger; if it matters before points can be redeemed,
+  limit Google to Gmail addresses (an Auth hook) or leave Google off.
+- An email change made by staff through the Supabase dashboard or admin API counts as proven.
 - "New customer" for referrals means no order known since Health Points started, plus the optional earlier-customers
   import; without the import, a long-time customer could claim a code once.
 - An order that lands while its customer is signing up for the first time is picked up on their next app open.
@@ -113,14 +131,15 @@ reverse lookup from a referral code to its owner: unique constraints, row locks 
 ## Tests
 
 ```bash
-supabase/tests/run.sh            # 67 Deno tests: real Postgres 17 for the ledger, mocked supabase-js for sign-in
+supabase/tests/run.sh            # 74 Deno tests: real Postgres 17 for the ledger, mocked supabase-js for sign-in
 npx tsc --noEmit                 # app code (supabase/ and backend/ excluded; deno checks supabase/)
-python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 20 browser checks, see the file header
+python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 23 browser checks, see the file header
 ```
 
 `run.sh` covers: awards, idempotency, tiers, refunds (partial, amount-only, foreign currency, tax-exclusive, fees,
 before the order, every arrival order), referral rules and reversal, orders before sign-up, email matching
-(case, guest checkout, changes), earlier-customer list, concurrency (parallel deliveries, refund-vs-award,
+(case, guest checkout, changes), mailbox proof (unproven bindings collect nothing, email changes and deletions
+in Auth move or release the binding, a stale read cannot undo a change, the trigger's lock order), earlier-customer list, concurrency (parallel deliveries, refund-vs-award,
 claims, 30 events for one customer at once), API roles locked out, HMAC, 18-digit IDs, CORS, Supabase-user
 checks (unconfirmed email refused), and the app's email OTP, Apple id-token and OAuth PKCE steps against a
 mocked supabase-js. The browser test drives the real web export with real supabase-js against stand-in Auth

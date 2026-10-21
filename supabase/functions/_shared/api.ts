@@ -14,6 +14,29 @@ export interface AuthUser {
   id: string;
   email: string | null;
   emailConfirmed: boolean;
+  /** How this session was signed in (the access token's amr methods: otp, oauth, ...). */
+  methods: string[];
+  /** Identity providers linked to the user (app_metadata.providers: email, google, apple, ...). */
+  providers: string[];
+}
+
+// Sign-in methods that prove the person reads the mailbox right now.
+const MAILBOX_METHODS = new Set(['otp', 'magiclink', 'email/signup', 'email_change', 'invite', 'recovery']);
+// Addresses the identity provider itself runs, so its word is final.
+const PROVIDER_DOMAINS: Record<string, string[]> = {
+  google: ['gmail.com', 'googlemail.com'],
+  apple: ['privaterelay.appleid.com'],
+};
+
+/**
+ * Whether this user may have Shopify orders matched to their email. A
+ * provider's "verified" flag is not enough on its own: Google, for example,
+ * can keep an address on another domain after that mailbox changes hands.
+ */
+export function mailboxProven(user: AuthUser, email: string): boolean {
+  if (user.methods.some((m) => MAILBOX_METHODS.has(m))) return true;
+  const domain = email.split('@')[1] ?? '';
+  return user.providers.some((p) => (PROVIDER_DOMAINS[p] ?? []).includes(domain));
 }
 
 export interface ApiConfig {
@@ -84,7 +107,7 @@ export async function handleLoyaltyRequest(req: Request, cfg: ApiConfig): Promis
     if (!user || !UUID.test(user.id)) return reply(401, { error: 'sign_in_required' });
     const email = normalizeEmail(user.email);
     if (!email || !user.emailConfirmed) return reply(403, { error: 'email_not_confirmed' });
-    const member: Member = { memberId: user.id.toLowerCase(), email };
+    const member: Member = { memberId: user.id.toLowerCase(), email, emailProven: mailboxProven(user, email) };
 
     if (route === 'me') {
       return reply(200, { member: await cfg.db.getMember(member) });

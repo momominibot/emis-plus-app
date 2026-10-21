@@ -82,6 +82,7 @@ class FakeSupabase:
         self.logouts = 0
         self.loyalty_auth = []
         self.claimed = None
+        self.linked = True  # whether the member has proven the mailbox (ordersLinked)
 
     def session(self, email):
         now = int(time.time())
@@ -110,6 +111,7 @@ class FakeSupabase:
             self.verify.append(body)
             if body.get("token") != "123456":
                 return route.fulfill(status=403, json={"code": 403, "error_code": "otp_expired", "msg": "Token has expired or is invalid"}, headers=CORS)
+            self.linked = True  # an emailed code proves the mailbox
             return route.fulfill(json=self.session(body["email"]), headers=CORS)
         if url.path == "/auth/v1/authorize":
             self.authorize = q
@@ -134,7 +136,7 @@ class FakeSupabase:
                 self.claimed = body.get("code")
                 return route.fulfill(json={"outcome": "pending"}, headers=CORS)
             return route.fulfill(json={"member": {
-                "memberId": USER_ID, "email": "pat@example.com", "points": 345, "tier": "silver", "totalSpentCents": 34500,
+                "memberId": USER_ID, "email": "pat@example.com", "ordersLinked": self.linked, "points": 345, "tier": "silver", "totalSpentCents": 34500,
                 "referralCode": "ABCD2345", "referralsCompleted": 1, "referralsPending": 0,
                 "referredStatus": "pending" if self.claimed else None,
                 "transactions": [{"id": "1", "date": "2026-10-01T03:00:00Z", "kind": "order", "points": 123,
@@ -219,13 +221,26 @@ def run(web_test, web_plain):
             "() => Object.keys(localStorage).filter(k => k.startsWith('sb-') && (localStorage.getItem(k) || '').includes('access_token'))")
         check(stored == [], "sign-out clears the stored session")
 
-        # ---- Google (PKCE redirect)
+        # ---- Google (PKCE redirect), on an address Google does not run
+        fake.linked = False
         with page.expect_navigation(url="**" + BASE + "/account", timeout=20000):
             page.get_by_text("Continue with Google").click()
         page.get_by_text("Your referral code").wait_for(timeout=15000)
         check(fake.authorize is not None and fake.authorize.get("provider") == "google", "Google goes through Supabase authorize")
         check(fake.authorize.get("redirect_to") == origin + BASE + "/auth/callback", "redirect_to is the web callback")
         check(len(fake.exchanges) == 1, "PKCE code exchanged once with a matching verifier")
+        page.get_by_text("Connect your emis.asia orders").wait_for()
+        check(True, "unproven mailbox asks to connect orders")
+        shot(page, "account-confirm-email")
+        otp_before = len(fake.otp)
+        page.get_by_text("Email me a code").click()
+        page.get_by_placeholder("6-digit code").wait_for()
+        check(len(fake.otp) == otp_before + 1 and fake.otp[-1].get("email") == "pat@example.com",
+              "confirm code goes to the signed-in email, not a typed one")
+        page.get_by_placeholder("6-digit code").fill("123456")
+        page.get_by_text("Confirm", exact=True).click()
+        page.get_by_text("Connect your emis.asia orders").wait_for(state="detached", timeout=15000)
+        check(fake.verify[-1].get("type") == "email" and fake.linked, "a confirmed code connects the orders")
         httpd.shutdown()
 
         # ---- unconfigured build

@@ -35,7 +35,7 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
       return row.r;
     },
     async getMember(m) {
-      const [row] = await sql`select loyalty.get_member(${m.memberId}::uuid, ${m.email}) as r`;
+      const [row] = await sql`select loyalty.get_member(${m.memberId}::uuid, ${m.email}, ${m.emailProven}) as r`;
       return row.r;
     },
     async claimReferral(m, code) {

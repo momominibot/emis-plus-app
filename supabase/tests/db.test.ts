@@ -9,9 +9,20 @@ const wh = () => `wh-${Date.now()}-${seq++}`;
 // Customer n is the Supabase user uid(n) with the confirmed email mail(n).
 const uid = (n: number | string) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const mail = (n: number | string) => `c${n}@example.com`;
-const who = (n: number | string) => ({ memberId: uid(n), email: mail(n) });
-/** The customer opens the app signed in (creates the member, links waiting orders). */
-const signIn = (t: TestDb, n: number | string) => t.db.getMember(who(n));
+const who = (n: number | string, emailProven = true) => ({ memberId: uid(n), email: mail(n), emailProven });
+/** Customer n exists in (stand-in) Supabase Auth with a confirmed email. */
+const authUser = (t: TestDb, n: number | string, email = mail(n)) =>
+  t.sql`insert into auth.users (id, email, email_confirmed_at) values (${uid(n)}, ${email}, now()) on conflict do nothing`;
+/** Supabase Auth changes customer n's email (after the new address is confirmed). */
+const changeEmail = (t: TestDb, n: number | string, email: string) => t.sql`update auth.users set email = ${email} where id = ${uid(n)}`;
+/**
+ * The customer opens the app signed in (creates the member, links waiting
+ * orders). emailProven: they signed in with an emailed code, as by default.
+ */
+async function signIn(t: TestDb, n: number | string, emailProven = true) {
+  await authUser(t, n);
+  return t.db.getMember(who(n, emailProven));
+}
 const claim = (t: TestDb, n: number | string, code: string) => t.db.claimReferral(who(n), code);
 
 /** orders/paid for customer n's email, with the customer already signed up. */
@@ -56,7 +67,7 @@ async function paidRetrying(t: TestDb, order: number, customer: number, cents: n
   }
 }
 // deno-lint-ignore no-explicit-any
-const member = async (t: TestDb, c: number | string) => (await t.db.getMember(who(c))) as any;
+const member = async (t: TestDb, c: number | string, emailProven = true) => (await signIn(t, c, emailProven)) as any;
 const points = async (t: TestDb, c: number | string) => (await member(t, c)).points as number;
 
 /** Balance always equals the ledger sum, and balance_after runs in order. */
@@ -172,12 +183,111 @@ dbTest('a known order or an earlier-customer email blocks referral claims', asyn
   assertEquals(await claim(t, 4, code), { outcome: 'pending' });
 });
 
+const order = (t: TestDb, id: number, email: string, cents: number) =>
+  t.db.recordPaidOrder({ webhookId: wh(), orderId: String(id), email, customerId: null, orderName: '#' + id, amountCents: cents });
+
 dbTest('a member who changes email keeps their orders and picks up the new email ones', async (t) => {
   await paid(t, 801, 9, 2000);
-  await t.db.recordPaidOrder({ webhookId: wh(), orderId: '802', email: 'new9@example.com', customerId: null, orderName: '#802', amountCents: 1000 });
-  const m = (await t.db.getMember({ memberId: uid(9), email: 'NEW9@example.com' })) as Record<string, any>;
-  assertEquals([m.email, m.points], ['new9@example.com', 30]);
-  await assertRejects(() => t.db.getMember({ memberId: uid(10), email: 'new9@example.com' }), Error, 'another member');
+  await order(t, 802, 'new9@example.com', 1000);
+  await changeEmail(t, 9, 'NEW9@example.com');
+  const m = (await t.db.getMember({ memberId: uid(9), email: 'new9@example.com', emailProven: false })) as Record<string, any>;
+  assertEquals([m.email, m.ordersLinked, m.points], ['new9@example.com', true, 30]); // Auth confirmed the new address
+});
+
+dbTest('without proof of the mailbox (Google on a company address) orders wait', async (t) => {
+  assertEquals((await order(t, 901, mail(11), 4000)).outcome, 'stored_until_sign_up');
+  const m = await member(t, 11, false);
+  assertEquals([m.email, m.ordersLinked, m.points, m.orders.length], [mail(11), false, 0, 0]);
+  assertEquals((await order(t, 902, mail(11), 1000)).outcome, 'stored_until_sign_up');
+  const proven = await member(t, 11, true); // later signs in with an emailed code
+  assertEquals([proven.ordersLinked, proven.points, proven.orders.length], [true, 50, 2]);
+  assertEquals((await member(t, 11, false)).ordersLinked, true); // proof stays until the email changes
+  assertEquals((await order(t, 903, mail(11), 1000)).outcome, 'awarded');
+});
+
+dbTest('an email change in Supabase Auth moves the binding at once', async (t) => {
+  await paid(t, 1101, 12, 2000);
+  await changeEmail(t, 12, 'new12@example.com');
+  const [row] = await t.sql`select email, email_proven_at is not null as proven from loyalty.members where member_id = ${uid(12)}`;
+  assertEquals(row, { email: 'new12@example.com', proven: true });
+  // The old address now belongs to nobody, so its next order waits for whoever signs up with it.
+  assertEquals((await order(t, 1102, mail(12), 3000)).outcome, 'stored_until_sign_up');
+  assertEquals((await order(t, 1103, 'new12@example.com', 1000)).outcome, 'awarded');
+  await authUser(t, 13, mail(12));
+  const newcomer = (await t.db.getMember({ memberId: uid(13), email: mail(12), emailProven: true })) as Record<string, any>;
+  assertEquals([newcomer.points, newcomer.orders.map((o: { orderId: string }) => o.orderId)], [30, ['1102']]);
+  assertEquals(await points(t, 12), 30); // keeps 1101 and earns 1103
+});
+
+dbTest('a sign-in that read the old address cannot undo an email change', async (t) => {
+  await signIn(t, 14);
+  await changeEmail(t, 14, 'new14@example.com');
+  // The API looked the user up just before the change and still says c14.
+  const m = (await t.db.getMember({ memberId: uid(14), email: mail(14), emailProven: true })) as Record<string, any>;
+  assertEquals([m.email, m.ordersLinked], ['new14@example.com', true]);
+  assertEquals((await order(t, 1401, mail(14), 1000)).outcome, 'stored_until_sign_up');
+  // Nor can a caller name an address Auth never gave them.
+  await signIn(t, 15);
+  const other = (await t.db.getMember({ memberId: uid(15), email: 'new14@example.com', emailProven: true })) as Record<string, any>;
+  assertEquals(other.email, mail(15));
+  assertEquals((await order(t, 1402, 'new14@example.com', 1000)).outcome, 'awarded');
+  assertEquals(await points(t, 14), 10);
+});
+
+dbTest('deleting a Supabase user releases their address', async (t) => {
+  await paid(t, 1601, 16, 2000);
+  await t.sql`delete from auth.users where id = ${uid(16)}`;
+  const [row] = await t.sql`select email, email_proven_at from loyalty.members where member_id = ${uid(16)}`;
+  assertEquals(row, { email: null, email_proven_at: null });
+  assertEquals((await order(t, 1602, mail(16), 1000)).outcome, 'stored_until_sign_up');
+  await authUser(t, 17, mail(16));
+  const m = (await t.db.getMember({ memberId: uid(17), email: mail(16), emailProven: true })) as Record<string, any>;
+  assertEquals(m.points, 10);
+});
+
+dbTest('Auth giving an address to someone releases any stale holder', async (t) => {
+  await signIn(t, 19);
+  await signIn(t, 18);
+  // A stale binding (for example restored from a backup) on member 19.
+  await t.sql`update loyalty.members set email = 'shared@example.com', email_proven_at = now() where member_id = ${uid(19)}`;
+  await changeEmail(t, 18, 'shared@example.com');
+  const rows = await t.sql`select member_id::text as id, email, email_proven_at is not null as proven from loyalty.members order by member_id`;
+  assertEquals([...rows], [
+    { id: uid(18), email: 'shared@example.com', proven: true },
+    { id: uid(19), email: null, proven: false },
+  ]);
+  assertEquals((await order(t, 1801, 'shared@example.com', 1000)).outcome, 'awarded');
+  assertEquals(await points(t, 18), 10);
+});
+
+dbTest('the email trigger locks members in id order, like a referral claim', async (t) => {
+  // Member 21 (lower id) takes over an address member 22 still holds. A
+  // referral claim between them locks 21 then 22; the trigger must too.
+  await signIn(t, 21);
+  await signIn(t, 22);
+  await t.sql`update loyalty.members set email = 'taken@example.com', email_proven_at = now() where member_id = ${uid(22)}`;
+  const claimer = await t.sql.reserve();
+  let change: Promise<unknown> = Promise.resolve(null);
+  try {
+    await claimer`begin`;
+    await claimer`select 1 from loyalty.members where member_id = ${uid(21)} for update`;
+    change = changeEmail(t, 21, 'taken@example.com').execute().then(() => null, (err) => err);
+    for (let i = 0; ; i++) {
+      const [w] = await t.sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`;
+      if (w.n > 0) break;
+      assert(i < 200, 'the email change never waited for the claim');
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // Deadlocks if the trigger took member 22 before 21.
+    await claimer`select 1 from loyalty.members where member_id = ${uid(22)} for update`;
+    await claimer`commit`;
+  } finally {
+    await claimer`rollback`.catch(() => {});
+    claimer.release();
+  }
+  assertEquals(await change, null);
+  const [row] = await t.sql`select email from loyalty.members where member_id = ${uid(21)}`;
+  assertEquals(row.email, 'taken@example.com');
 });
 
 // ------------------------------------------------------------------- refunds
@@ -570,13 +680,14 @@ dbTest('API roles cannot read or call anything in the loyalty schema', async (t)
   for (const role of ['anon', 'authenticated', 'service_role'] as const) {
     const conn = await t.as(role);
     await assertRejects(() => conn`select * from loyalty.members`, Error, 'permission denied');
-    await assertRejects(() => conn`select loyalty.get_member(${uid(1)}::uuid, ${mail(1)})`, Error, 'permission denied');
+    await assertRejects(() => conn`select loyalty.get_member(${uid(1)}::uuid, ${mail(1)}, true)`, Error, 'permission denied');
+    await assertRejects(() => conn`select loyalty.auth_email_is(${uid(1)}::uuid, ${mail(1)})`, Error, 'permission denied');
     await assertRejects(() => conn`select loyalty.record_paid_order('x', 2, ${mail(1)}, null, 'x', 100000)`, Error, 'permission denied');
   }
 });
 
 dbTest('referral codes are well formed and unique across many members', async (t) => {
-  await t.sql`select loyalty.ensure_member(('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid, 'u' || g || '@example.com')
+  await t.sql`select loyalty.ensure_member_row(('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid)
                 from generate_series(1, 3000) g`;
   const [r] = await t.sql`
     select count(*)::int as n, count(distinct referral_code)::int as d,

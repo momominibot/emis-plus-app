@@ -15,8 +15,8 @@ const BIG_CUSTOMER = '115310627314723954';
 const PAT = { id: '6f9619ff-8b86-4011-b42d-00c04fc964ff', email: 'pat@example.com' };
 const SAM = { id: '0b5e3a3c-7f1d-4c2e-9a77-2f3f6a1d9c10', email: 'sam@example.com' };
 const USERS: Record<string, AuthUser> = {
-  'token-pat': { ...PAT, emailConfirmed: true },
-  'token-sam': { ...SAM, email: 'Sam@Example.com', emailConfirmed: true },
+  'token-pat': { ...PAT, emailConfirmed: true, methods: ['otp'], providers: ['email'] },
+  'token-sam': { ...SAM, email: 'Sam@Example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
 };
 
 async function sign(body: string): Promise<string> {
@@ -66,7 +66,13 @@ const refundBody = (refundId: string, orderId: string, amount: string) => `{
 function api(t: TestDb) {
   const cfg = {
     db: t.db,
-    getUser: async (token: string) => USERS[token] ?? null,
+    // The stand-in Auth: these users exist in auth.users, as they would in Supabase.
+    getUser: async (token: string) => {
+      const user = USERS[token];
+      if (!user) return null;
+      await t.sql`insert into auth.users (id, email, email_confirmed_at) values (${user.id}, ${user.email}, now()) on conflict do nothing`;
+      return user;
+    },
     allowedOrigins: ['https://momominibot.github.io'],
   };
   return {

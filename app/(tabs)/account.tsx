@@ -126,6 +126,9 @@ export default function AccountScreen() {
           </View>
         ) : (
           <>
+            {membership && !membership.ordersLinked && (
+              <SignInPanel confirmEmail={membership.email} onConfirmed={reload} />
+            )}
             {/* Membership card */}
             <View style={[styles.membershipCard, { backgroundColor: colors.primaryDark }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>

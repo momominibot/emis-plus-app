@@ -39,7 +39,24 @@ async function getUser(token: string): Promise<AuthUser | null> {
   }
   const user = data.user;
   if (!user) return null;
-  return { id: user.id, email: user.email ?? null, emailConfirmed: Boolean(user.email_confirmed_at) };
+  const providers = Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers.map(String) : [];
+  return {
+    id: user.id,
+    email: user.email ?? null,
+    emailConfirmed: Boolean(user.email_confirmed_at),
+    methods: amrMethods(token),
+    providers,
+  };
+}
+
+/** The amr methods of a token Supabase Auth has just accepted (getUser checked it). */
+function amrMethods(token: string): string[] {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return Array.isArray(payload.amr) ? payload.amr.map((a: { method?: unknown }) => String(a?.method ?? '')) : [];
+  } catch {
+    return [];
+  }
 }
 
 Deno.serve((req) =>

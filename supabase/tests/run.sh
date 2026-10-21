@@ -36,6 +36,13 @@ grant anon, authenticated, service_role to api_user;
 create role loyalty_owner login createdb;
 create database loyalty_template owner loyalty_owner;
 SQL
+# Stand-in for Supabase's auth.users, so the email-sync trigger is created and tested.
+"${PSQL[@]}" -d loyalty_template <<'SQL'
+create schema auth;
+create table auth.users (id uuid primary key, email text unique, email_confirmed_at timestamptz);
+grant usage on schema auth to loyalty_owner;
+grant select, insert, update, delete, trigger on auth.users to loyalty_owner;
+SQL
 "${PSQL[@]}" -d loyalty_template -c "alter default privileges for role loyalty_owner grant all on tables to anon, authenticated, service_role; alter default privileges for role loyalty_owner grant all on functions to anon, authenticated, service_role; alter default privileges for role loyalty_owner grant all on sequences to anon, authenticated, service_role;"
 "${PSQL[@]}" -d loyalty_template -U loyalty_owner -f "${MIGRATION:-migrations/20261020120000_loyalty.sql}"
 
