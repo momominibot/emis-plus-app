@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { SIGN_IN_AVAILABLE } from '@/lib/auth/config';
+import { AUTH_AVAILABLE } from '@/lib/auth/config';
 import { LOYALTY_AVAILABLE } from '@/lib/loyalty';
 import { getNewProducts } from '@/lib/shopify';
 import { useMembership } from '@/lib/useMembership';
@@ -22,7 +22,7 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme];
   const router = useRouter();
-  const { session, membership } = useMembership();
+  const { user, membership } = useMembership();
   const [newProducts, setNewProducts] = useState<Product[]>([]);
 
   useEffect(() => {
@@ -36,14 +36,14 @@ export default function HomeScreen() {
     } catch { /* Shopify not configured */ }
   }
 
-  const firstName = session?.customer?.firstName || null;
+  const firstName = user?.name || null;
   const tier = TIER_CONFIG[membership?.tier ?? 'silver'];
   const totalSpent = (membership?.totalSpentCents ?? 0) / 100;
   const nextTier = membership?.tier === 'silver' ? TIER_CONFIG.gold : membership?.tier === 'gold' ? TIER_CONFIG.diamond : null;
   const progress = nextTier ? Math.min(100, (totalSpent / nextTier.minSpend) * 100) : 100;
-  const rewardsHint = !SIGN_IN_AVAILABLE || !LOYALTY_AVAILABLE
+  const rewardsHint = !AUTH_AVAILABLE || !LOYALTY_AVAILABLE
     ? 'Health Points launch soon with EMIS+ accounts.'
-    : !session
+    : !user
       ? 'Sign in to collect Health Points on paid orders.'
       : null;
   const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening';

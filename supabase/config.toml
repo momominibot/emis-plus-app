@@ -1,9 +1,9 @@
-# Supabase CLI config for the EMIS+ loyalty backend (not yet linked to a
-# project; see docs/ACCOUNTS.md for the go-live steps).
-project_id = "emis-loyalty"
+# Supabase CLI config for the EMIS+ backend: Auth for app sign-in plus the
+# Health Points functions (not yet linked to a project; see docs/ACCOUNTS.md).
+project_id = "emis"
 
 # Both functions authenticate requests themselves: the webhook by Shopify's
-# HMAC, the API by checking the customer's token with Shopify.
+# HMAC, the API by checking the user's access token with Supabase Auth.
 [functions.shopify-webhook]
 verify_jwt = false
 

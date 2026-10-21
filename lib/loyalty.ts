@@ -1,17 +1,21 @@
-// Health Points client. Balances, history and referral codes live on the
-// EMIS+ loyalty service (Supabase edge function `loyalty`), keyed to the
-// Shopify customer ID. The app only presents the customer's own Shopify
-// token; the service asks Shopify who that is. Points come only from paid
-// orders, recorded by the service's Shopify webhook.
+// Health Points client. Balances, history, matched orders and referral
+// codes live on the EMIS+ loyalty service (Supabase edge function
+// `loyalty`), keyed to the Supabase user. The app only presents the user's
+// own access token; the service asks Supabase Auth who that is. Points come
+// only from paid orders, recorded by the service's Shopify webhook and
+// matched to the user by their confirmed email.
 
-import { NotSignedInError } from './auth/customerApi';
-import { expireSession, getAccessToken } from './auth/session';
+import { NotSignedInError, expireSession, getAccessToken } from './auth/session';
+import { AUTH_AVAILABLE, SUPABASE_URL } from './supabase';
 import type { Membership } from './types';
 
-const API_URL = (process.env.EXPO_PUBLIC_LOYALTY_API_URL || '').replace(/\/+$/, '');
+export { NotSignedInError };
 
-/** False until the loyalty service is deployed and its URL is configured. */
-export const LOYALTY_AVAILABLE = API_URL.length > 0;
+const API_URL = (process.env.EXPO_PUBLIC_LOYALTY_API_URL || (SUPABASE_URL ? SUPABASE_URL + '/functions/v1/loyalty' : ''))
+  .replace(/\/+$/, '');
+
+/** False until Supabase is configured and Health Points are switched on. */
+export const LOYALTY_AVAILABLE = AUTH_AVAILABLE && process.env.EXPO_PUBLIC_LOYALTY_ENABLED === 'true' && API_URL.length > 0;
 
 async function call(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await getAccessToken();
@@ -21,7 +25,7 @@ async function call(path: string, init: RequestInit = {}): Promise<Response> {
     headers: { ...(init.headers as Record<string, string>), Authorization: 'Bearer ' + token },
   });
   if (res.status === 401) {
-    await expireSession(token);
+    await expireSession();
     throw new NotSignedInError();
   }
   return res;

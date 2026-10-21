@@ -40,4 +40,4 @@ SQL
 "${PSQL[@]}" -d loyalty_template -U loyalty_owner -f "${MIGRATION:-migrations/20261020120000_loyalty.sql}"
 
 export TEST_PG_HOST=127.0.0.1 TEST_PG_PORT=$PORT
-deno test --config deno.json --allow-net --allow-env --allow-read "$@" tests/
+deno test --config deno.json --allow-net --allow-env --allow-read "${@:-tests/}"

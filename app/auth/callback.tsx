@@ -1,13 +1,14 @@
-// Shopify sends the customer back here after login, with ?code=&state=.
-// Web: the full-page redirect lands here. Native: the in-app auth session
-// usually finishes sign-in itself, and this screen only redirects onward.
+// Supabase sends the browser back here after Sign in with Google (or Apple
+// outside iOS), with ?code=... (PKCE). Web lands here after a full-page
+// redirect; on Android the router may also open it while the in-app browser
+// finishes the same sign-in (the exchange is shared, not repeated).
 
 import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { completeSignIn } from '@/lib/auth/session';
+import { completeOAuthRedirect } from '@/lib/auth/session';
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -16,19 +17,18 @@ function first(value: string | string[] | undefined): string | undefined {
 export default function AuthCallbackScreen() {
   const colors = Colors[useColorScheme()];
   const router = useRouter();
-  const params = useLocalSearchParams<{ code?: string; state?: string; error?: string; iss?: string }>();
+  const params = useLocalSearchParams<{ code?: string; error?: string; error_description?: string }>();
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    completeSignIn({
+    completeOAuthRedirect({
       code: first(params.code),
-      state: first(params.state),
       error: first(params.error),
-      iss: first(params.iss),
+      error_description: first(params.error_description),
     }).then((result) => {
       if (!alive) return;
-      if (result.ok) router.replace('/account');
+      if (result === null || result.ok) router.replace('/account');
       else setMessage(result.message);
     });
     return () => {

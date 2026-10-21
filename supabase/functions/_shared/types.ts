@@ -4,7 +4,8 @@
 export interface PaidOrderInput {
   webhookId: string | null;
   orderId: string;
-  customerId: string;
+  email: string;
+  customerId: string | null;
   orderName: string | null;
   amountCents: number;
   presentmentCents?: number | null;
@@ -35,9 +36,15 @@ export type ReferralOutcome =
   | 'not_new_customer'
   | 'mutual_referral';
 
+/** A signed-in Supabase user whose email Supabase Auth has confirmed. */
+export interface Member {
+  memberId: string;
+  email: string;
+}
+
 export interface LoyaltyDb {
   recordPaidOrder(input: PaidOrderInput): Promise<Record<string, unknown>>;
   recordRefund(input: RefundInput): Promise<Record<string, unknown>>;
-  getMember(customerId: string): Promise<Record<string, unknown>>;
-  claimReferral(customerId: string, code: string, hasShopifyOrders: boolean): Promise<{ outcome: ReferralOutcome }>;
+  getMember(member: Member): Promise<Record<string, unknown>>;
+  claimReferral(member: Member, code: string): Promise<{ outcome: ReferralOutcome }>;
 }

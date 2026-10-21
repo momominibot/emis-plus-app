@@ -85,6 +85,7 @@ export async function handleShopifyWebhook(req: Request, cfg: WebhookConfig): Pr
         ? await cfg.db.recordPaidOrder({
             webhookId,
             orderId: order.orderId,
+            email: order.email,
             customerId: order.customerId,
             orderName: order.orderName,
             amountCents: order.amountCents,

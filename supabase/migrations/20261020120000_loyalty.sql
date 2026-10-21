@@ -1,24 +1,33 @@
--- EMIS+ Health Points, keyed to the Shopify customer ID.
+-- EMIS+ Health Points, keyed to the Supabase Auth user.
 --
 -- Who touches this schema: only the two edge functions (shopify-webhook and
 -- loyalty), connecting as the database owner through SUPABASE_DB_URL. The
 -- schema is not exposed through PostgREST and the API roles (anon,
 -- authenticated, service_role) get no rights here.
 --
+-- Identity: a member is a Supabase Auth user (member_id = auth user id).
+-- Shopify orders are matched to members by email (lowercased, trimmed): the
+-- webhook records the order's email, and the loyalty API only ever passes a
+-- member's email once Supabase Auth has confirmed it. Orders that arrive
+-- before their customer signs up wait unassigned and are awarded the next
+-- time that customer opens the app. members.shopify_customer_id is kept so a
+-- later migration can link by Shopify customer ID instead.
+--
 -- Rules enforced here, not in the app:
 --   * Points come only from paid orders (orders/paid webhook, HMAC checked
 --     by the edge function before it calls record_paid_order).
---   * One award per Shopify order, one clawback per Shopify refund.
---   * A referral code belongs to a real member, each customer can claim one
---     code once, only while they have no orders, never their own code and
---     never back to someone they referred. Both bonuses wait for the new
---     customer's first paid order of at least S$1, and both are reversed if
---     refunds leave less than S$1 of that order.
+--   * One award per Shopify order; refunds are recalculated per order.
+--   * A referral code belongs to a member. Each member can claim one code,
+--     once, only while no order is known for their email (and their email is
+--     not on the imported list of earlier Shopify customers), never their
+--     own code and never back to someone they referred. Both bonuses wait
+--     for the new customer's first paid order of at least S$1, and both are
+--     reversed if refunds leave less than S$1 of that order.
 --   * Arrival order does not matter: after every order or refund the
---     customer's tier rates are re-priced in payment order (processed_at)
+--     member's tier rates are re-priced in payment order (processed_at)
 --     and the referral is worked out from the order that was really paid
 --     first, so the final balances are the same however Shopify's webhooks
---     arrive (see reconcile_customer).
+--     arrive (see reconcile_member).
 --
 -- Amounts are integer cents (SGD). Tier multipliers are stored x10 so all
 -- arithmetic stays in integers: points = floor(cents * multiplier_x10 / 1000).
@@ -27,19 +36,31 @@ create schema if not exists loyalty;
 revoke all on schema loyalty from public;
 
 create table loyalty.members (
-  customer_id       bigint primary key check (customer_id > 0),
-  referral_code     text not null unique
-                    check (referral_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$'),
-  points            bigint not null default 0,
-  total_spent_cents bigint not null default 0 check (total_spent_cents >= 0),
-  created_at        timestamptz not null default now(),
-  updated_at        timestamptz not null default now()
+  member_id           uuid primary key,  -- Supabase auth.users.id
+  email               text not null unique check (email = lower(btrim(email)) and email like '%@%'),
+  shopify_customer_id bigint check (shopify_customer_id > 0),
+  referral_code       text not null unique
+                      check (referral_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$'),
+  points              bigint not null default 0,
+  total_spent_cents   bigint not null default 0 check (total_spent_cents >= 0),
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
 );
 
--- One row per paid order that has been through the award step.
+-- Emails of people who ordered on emis.asia before Health Points started
+-- (imported once from a Shopify customer export). They are not "new
+-- customers" for referrals.
+create table loyalty.prior_customers (
+  email text primary key check (email = lower(btrim(email)))
+);
+
+-- One row per paid order. member_id stays null until a member with the
+-- order's email exists; points are only posted once it is set.
 create table loyalty.orders (
   order_id       bigint primary key check (order_id > 0),
-  customer_id    bigint not null references loyalty.members,
+  member_id      uuid references loyalty.members,
+  customer_email text not null check (customer_email = lower(btrim(customer_email)) and customer_email like '%@%'),
+  shopify_customer_id bigint check (shopify_customer_id > 0),
   order_name     text,
   processed_at   timestamptz not null default now(),  -- when Shopify says the order was placed
   amount_cents   bigint not null check (amount_cents >= 0),
@@ -52,20 +73,22 @@ create table loyalty.orders (
   -- conversion always works on the running total: refunding everything adds
   -- up to the whole order whatever shipping refunds came in between.
   refunded_presentment_cents bigint not null default 0 check (refunded_presentment_cents >= 0),
-  multiplier_x10 integer not null check (multiplier_x10 in (10, 15, 20)),
-  points_earned  integer not null check (points_earned >= 0),
+  multiplier_x10 integer not null default 10 check (multiplier_x10 in (10, 15, 20)),
+  points_earned  integer not null default 0 check (points_earned >= 0),
   refunded_cents bigint not null default 0,
   points_clawed  integer not null default 0,
   created_at     timestamptz not null default now(),
   check (refunded_cents between 0 and amount_cents),
-  check (points_clawed between 0 and points_earned)
+  check (points_clawed between 0 and points_earned),
+  check (member_id is not null or (points_earned = 0 and points_clawed = 0))
 );
-create index orders_customer_idx on loyalty.orders (customer_id, processed_at, order_id);
+create index orders_member_idx on loyalty.orders (member_id, processed_at, order_id);
+create index orders_email_idx on loyalty.orders (customer_email);
 
 -- Refunds are stored as Shopify reported them, even before their order has
--- been awarded (webhook order is not guaranteed); record_paid_order applies
--- them later. The merchandise amount is worked out against the order when
--- applied (see refresh_order_refunds) and kept in amount_cents.
+-- arrived (webhook order is not guaranteed). The merchandise amount is
+-- worked out against the order (see refresh_order_refunds) and kept in
+-- amount_cents.
 create table loyalty.refunds (
   refund_id      bigint primary key check (refund_id > 0),
   order_id       bigint not null check (order_id > 0),
@@ -81,12 +104,12 @@ create table loyalty.refunds (
   applied        boolean not null default false,
   created_at     timestamptz not null default now()
 );
-create index refunds_pending_idx on loyalty.refunds (order_id) where not applied;
+create index refunds_order_idx on loyalty.refunds (order_id, refund_id);
 
 create table loyalty.referrals (
   id                  bigint generated always as identity primary key,
-  referrer_id         bigint not null references loyalty.members,
-  referee_id          bigint not null unique references loyalty.members,
+  referrer_id         uuid not null references loyalty.members,
+  referee_id          uuid not null unique references loyalty.members,
   code                text not null,
   status              text not null default 'pending' check (status in ('pending', 'completed', 'reversed')),
   qualifying_order_id bigint unique,
@@ -99,7 +122,7 @@ create index referrals_referrer_idx on loyalty.referrals (referrer_id);
 
 create table loyalty.ledger (
   id            bigint generated always as identity primary key,
-  customer_id   bigint not null references loyalty.members,
+  member_id     uuid not null references loyalty.members,
   kind          text not null
                 check (kind in ('order', 'refund', 'tier_adjustment', 'referral_welcome', 'referral_reward', 'referral_reversal')),
   points        integer not null check (points <> 0),
@@ -111,10 +134,10 @@ create table loyalty.ledger (
   created_at    timestamptz not null default now()
 );
 create unique index ledger_one_order_award on loyalty.ledger (order_id) where kind = 'order';
--- Referral entries are not unique: reconcile_customer posts whatever brings
+-- Referral entries are not unique: reconcile_member posts whatever brings
 -- each side's net bonus to 100 or 0, so a referral can be undone and redone.
-create index ledger_referral_idx on loyalty.ledger (referral_id, customer_id) where referral_id is not null;
-create index ledger_customer_idx on loyalty.ledger (customer_id, id desc);
+create index ledger_referral_idx on loyalty.ledger (referral_id, member_id) where referral_id is not null;
+create index ledger_member_idx on loyalty.ledger (member_id, id desc);
 
 -- Audit trail of deliveries; also drops exact redeliveries early.
 create table loyalty.webhook_events (
@@ -126,6 +149,7 @@ create table loyalty.webhook_events (
 
 -- Defence in depth: the owner bypasses RLS, everyone else sees nothing.
 alter table loyalty.members enable row level security;
+alter table loyalty.prior_customers enable row level security;
 alter table loyalty.orders enable row level security;
 alter table loyalty.refunds enable row level security;
 alter table loyalty.referrals enable row level security;
@@ -153,6 +177,11 @@ language sql immutable set search_path = '' as $$
   end
 $$;
 
+create function loyalty.normalize_email(p_email text) returns text
+language sql immutable set search_path = '' as $$
+  select nullif(lower(btrim(p_email)), '')
+$$;
+
 -- 8 characters from a 32-letter alphabet without 0/O/1/I. Bytes 0-5, 7 and
 -- 9 of a v4 UUID are fully random; 256 % 32 = 0 so there is no modulo bias.
 create function loyalty.new_referral_code() returns text
@@ -176,39 +205,47 @@ language sql volatile set search_path = '' as $$
   select pg_catalog.pg_advisory_xact_lock(7731, pg_catalog.hashtext(p_order_id::text))
 $$;
 
-create function loyalty.ensure_member(p_customer_id bigint) returns loyalty.members
+-- Creates the member on first use, and follows email changes made in
+-- Supabase Auth. The email passed in must already be confirmed.
+create function loyalty.ensure_member(p_member_id uuid, p_email text) returns loyalty.members
 language plpgsql volatile set search_path = '' as $$
 declare
   m loyalty.members;
+  v_email text := loyalty.normalize_email(p_email);
 begin
-  if p_customer_id is null or p_customer_id <= 0 then
-    raise exception 'invalid customer id';
-  end if;
-  select * into m from loyalty.members where customer_id = p_customer_id;
+  if p_member_id is null then raise exception 'invalid member id'; end if;
+  if v_email is null or v_email not like '%@%' then raise exception 'invalid email'; end if;
+  select * into m from loyalty.members where member_id = p_member_id;
   if found then
+    if m.email <> v_email then
+      update loyalty.members set email = v_email, updated_at = now() where member_id = p_member_id returning * into m;
+    end if;
     return m;
+  end if;
+  if exists (select 1 from loyalty.members where email = v_email and member_id <> p_member_id) then
+    raise exception 'email belongs to another member';
   end if;
   for attempt in 1..5 loop
     begin
-      insert into loyalty.members (customer_id, referral_code)
-      values (p_customer_id, loyalty.new_referral_code())
-      on conflict (customer_id) do nothing
+      insert into loyalty.members (member_id, email, referral_code)
+      values (p_member_id, v_email, loyalty.new_referral_code())
+      on conflict (member_id) do nothing
       returning * into m;
-      if m.customer_id is null then
+      if m.member_id is null then
         -- A concurrent call created the member first.
-        select * into strict m from loyalty.members where customer_id = p_customer_id;
+        select * into strict m from loyalty.members where member_id = p_member_id;
       end if;
       return m;
     exception when unique_violation then
-      null; -- referral code collision, draw another
+      null; -- referral code collision (or a concurrent claim of the email): try again
     end;
   end loop;
-  raise exception 'could not allocate a referral code';
+  raise exception 'could not create the member';
 end
 $$;
 
 create function loyalty.add_points(
-  p_customer_id bigint, p_kind text, p_points integer, p_description text,
+  p_member_id uuid, p_kind text, p_points integer, p_description text,
   p_order_id bigint default null, p_refund_id bigint default null, p_referral_id bigint default null
 ) returns bigint
 language plpgsql volatile set search_path = '' as $$
@@ -217,20 +254,40 @@ declare
 begin
   update loyalty.members
      set points = points + p_points, updated_at = now()
-   where customer_id = p_customer_id
+   where member_id = p_member_id
   returning points into strict v_balance;
-  insert into loyalty.ledger (customer_id, kind, points, balance_after, order_id, refund_id, referral_id, description)
-  values (p_customer_id, p_kind, p_points, v_balance, p_order_id, p_refund_id, p_referral_id, p_description);
+  insert into loyalty.ledger (member_id, kind, points, balance_after, order_id, refund_id, referral_id, description)
+  values (p_member_id, p_kind, p_points, v_balance, p_order_id, p_refund_id, p_referral_id, p_description);
   return v_balance;
+end
+$$;
+
+-- Locks a member and, if they were referred, their referrer, in id order
+-- (the order every path uses, so concurrent work cannot deadlock). Raises
+-- 40001 (retry) if a referral claim slipped in between the lookup and the
+-- lock.
+create function loyalty.lock_member(p_member_id uuid) returns void
+language plpgsql volatile set search_path = '' as $$
+declare
+  v_referrer uuid;
+begin
+  select referrer_id into v_referrer from loyalty.referrals where referee_id = p_member_id;
+  perform 1 from loyalty.members
+    where member_id in (p_member_id, v_referrer)
+    order by member_id for update;
+  if v_referrer is distinct from (select referrer_id from loyalty.referrals where referee_id = p_member_id) then
+    raise exception 'referral changed while locking' using errcode = '40001';
+  end if;
 end
 $$;
 
 -- Works out an order's refunds from scratch, from every refund stored for
 -- it, taken in refund-ID order, so the result depends only on which refunds
 -- exist and never on the order their webhooks arrived in. Caller holds
--- lock_order and the member row locks. Returns the change in points clawed
--- back (negative if an earlier over-claw is restored), or null when the
--- order has not been awarded yet (its refunds wait).
+-- lock_order and, for an assigned order, the member locks. For an assigned
+-- order it posts the change in points clawed back (negative if an earlier
+-- over-claw is restored) and returns it; for an unassigned order it only
+-- updates the totals and returns 0; null when the order has not arrived.
 --
 -- Merchandise refunded is the larger of the refunded items' subtotal and the
 -- money returned minus shipping, duties, extra fees and (for tax-exclusive
@@ -284,20 +341,24 @@ begin
       update loyalty.refunds set applied = true, amount_cents = v_amount where refund_id = r.refund_id;
     end if;
   end loop;
-
   v_refunded := least(v_refunded, o.amount_cents);
+
+  if o.member_id is null then
+    update loyalty.orders set refunded_cents = v_refunded, refunded_presentment_cents = v_cum_p where order_id = o.order_id;
+    return 0;
+  end if;
+
   -- Points clawed back = what the refunded part earned at this order's rate.
   v_clawed := o.points_earned - ((o.amount_cents - v_refunded) * o.multiplier_x10 / 1000)::integer;
   v_delta := v_clawed - o.points_clawed;
-
   update loyalty.orders
      set refunded_cents = v_refunded, points_clawed = v_clawed, refunded_presentment_cents = v_cum_p
    where order_id = o.order_id;
   update loyalty.members
      set total_spent_cents = greatest(total_spent_cents - (v_refunded - o.refunded_cents), 0), updated_at = now()
-   where customer_id = o.customer_id;
+   where member_id = o.member_id;
   if v_delta <> 0 then
-    perform loyalty.add_points(o.customer_id, 'refund', -v_delta,
+    perform loyalty.add_points(o.member_id, 'refund', -v_delta,
       case when v_delta > 0 then 'Refund on order ' else 'Refund recalculated on order ' end
         || coalesce(o.order_name, '#' || o.order_id::text),
       o.order_id, p_trigger_refund_id, null);
@@ -306,7 +367,49 @@ begin
 end
 $$;
 
--- Brings one customer's awards in line with the full history we know of,
+-- Gives an unassigned order to a member and posts its points: the award at
+-- the tier their earlier-paid orders put them in, less what any refunds
+-- already known took back. Caller holds lock_order and the member locks.
+create function loyalty.award_order(p_order_id bigint, p_member_id uuid) returns integer
+language plpgsql volatile set search_path = '' as $$
+declare
+  o loyalty.orders;
+  v_spent bigint;
+  v_mult integer;
+  v_earned integer;
+  v_clawed integer;
+begin
+  select * into strict o from loyalty.orders where order_id = p_order_id for update;
+  if o.member_id is not null then
+    return 0;
+  end if;
+  select coalesce(sum(amount_cents - refunded_cents), 0) into v_spent
+    from loyalty.orders
+   where member_id = p_member_id and (processed_at, order_id) < (o.processed_at, o.order_id);
+  v_mult := loyalty.multiplier_x10(v_spent);
+  v_earned := (o.amount_cents * v_mult / 1000)::integer;
+  v_clawed := v_earned - ((o.amount_cents - o.refunded_cents) * v_mult / 1000)::integer;
+  update loyalty.orders
+     set member_id = p_member_id, multiplier_x10 = v_mult, points_earned = v_earned, points_clawed = v_clawed
+   where order_id = o.order_id;
+  update loyalty.members
+     set total_spent_cents = total_spent_cents + (o.amount_cents - o.refunded_cents),
+         shopify_customer_id = coalesce(shopify_customer_id, o.shopify_customer_id),
+         updated_at = now()
+   where member_id = p_member_id;
+  if v_earned > 0 then
+    perform loyalty.add_points(p_member_id, 'order', v_earned,
+      'Order ' || coalesce(o.order_name, '#' || o.order_id::text), o.order_id, null, null);
+  end if;
+  if v_clawed > 0 then
+    perform loyalty.add_points(p_member_id, 'refund', -v_clawed,
+      'Refund on order ' || coalesce(o.order_name, '#' || o.order_id::text), o.order_id, null, null);
+  end if;
+  return v_earned - v_clawed;
+end
+$$;
+
+-- Brings one member's awards in line with the full history we know of,
 -- independent of the order in which webhooks arrived:
 --   1. each order's tier rate comes from the net spend (after refunds) of the
 --      orders paid before it (processed_at); any change is posted as a
@@ -315,8 +418,8 @@ $$;
 --      of at least S$1: completed while it keeps at least S$1, reversed once
 --      it keeps less, pending while there is none. Each side's net referral
 --      points are brought to 100 or 0.
--- Caller holds the member locks of the customer and of their referrer.
-create function loyalty.reconcile_customer(p_customer_id bigint) returns void
+-- Caller holds the member locks of the member and of their referrer.
+create function loyalty.reconcile_member(p_member_id uuid) returns void
 language plpgsql volatile set search_path = '' as $$
 declare
   o record;
@@ -333,7 +436,7 @@ declare
   v_side record;
 begin
   for o in
-    select * from loyalty.orders where customer_id = p_customer_id
+    select * from loyalty.orders where member_id = p_member_id
      order by processed_at, order_id for update
   loop
     v_mult := loyalty.multiplier_x10(v_before);
@@ -344,19 +447,19 @@ begin
       update loyalty.orders set multiplier_x10 = v_mult, points_earned = v_earned, points_clawed = v_clawed
        where order_id = o.order_id;
       if v_delta <> 0 then
-        perform loyalty.add_points(p_customer_id, 'tier_adjustment', v_delta,
+        perform loyalty.add_points(p_member_id, 'tier_adjustment', v_delta,
           'Tier rate updated for order ' || coalesce(o.order_name, '#' || o.order_id::text), o.order_id, null, null);
       end if;
     end if;
     v_before := v_before + o.amount_cents - o.refunded_cents;
   end loop;
 
-  select * into ref from loyalty.referrals where referee_id = p_customer_id for update;
+  select * into ref from loyalty.referrals where referee_id = p_member_id for update;
   if not found then
     return;
   end if;
   select * into v_first from loyalty.orders
-   where customer_id = p_customer_id and amount_cents >= 100
+   where member_id = p_member_id and amount_cents >= 100
    order by processed_at, order_id limit 1;
   if v_first.order_id is null then
     v_status := 'pending';
@@ -368,16 +471,16 @@ begin
   v_want := case when v_status = 'completed' then 100 else 0 end;
 
   for v_side in
-    select ref.referee_id as customer_id, 'referral_welcome' as up, 'Welcome bonus: referred by a friend' as up_text,
+    select ref.referee_id as member_id, 'referral_welcome' as up, 'Welcome bonus: referred by a friend' as up_text,
            'Welcome bonus reversed: first order refunded' as down_text
     union all
     select ref.referrer_id, 'referral_reward', 'Referral bonus: a friend placed their first order',
            'Referral bonus reversed: friend''s first order refunded'
   loop
     select coalesce(sum(points), 0)::integer into v_have
-      from loyalty.ledger where referral_id = ref.id and customer_id = v_side.customer_id;
+      from loyalty.ledger where referral_id = ref.id and member_id = v_side.member_id;
     if v_want <> v_have then
-      perform loyalty.add_points(v_side.customer_id,
+      perform loyalty.add_points(v_side.member_id,
         case when v_want > v_have then v_side.up else 'referral_reversal' end, v_want - v_have,
         case when v_want > v_have then v_side.up_text else v_side.down_text end,
         v_first.order_id, null, ref.id);
@@ -392,20 +495,51 @@ begin
 end
 $$;
 
+-- Gives a member every waiting order placed with their email, then
+-- reconciles. Takes the order locks (in id order) before the member locks,
+-- like the webhook paths.
+create function loyalty.link_member_orders(p_member_id uuid) returns integer
+language plpgsql volatile set search_path = '' as $$
+declare
+  v_email text;
+  v_ids bigint[];
+  v_id bigint;
+  v_linked integer := 0;
+begin
+  select email into strict v_email from loyalty.members where member_id = p_member_id;
+  select array_agg(order_id order by order_id) into v_ids
+    from loyalty.orders where customer_email = v_email and member_id is null;
+  if v_ids is null then
+    return 0;
+  end if;
+  foreach v_id in array v_ids loop
+    perform loyalty.lock_order(v_id);
+  end loop;
+  perform loyalty.lock_member(p_member_id);
+  for v_id in
+    select order_id from loyalty.orders
+     where order_id = any (v_ids) and member_id is null and customer_email = v_email
+     order by processed_at, order_id
+  loop
+    perform loyalty.award_order(v_id, p_member_id);
+    v_linked := v_linked + 1;
+  end loop;
+  perform loyalty.reconcile_member(p_member_id);
+  return v_linked;
+end
+$$;
+
 -- --------------------------------------------------------------- entry points
 
 create function loyalty.record_paid_order(
-  p_webhook_id text, p_order_id bigint, p_customer_id bigint, p_order_name text, p_amount_cents bigint,
-  p_presentment_cents bigint default null, p_presentment_currency text default null, p_taxes_included boolean default true,
-  p_processed_at timestamptz default null
+  p_webhook_id text, p_order_id bigint, p_email text, p_shopify_customer_id bigint, p_order_name text,
+  p_amount_cents bigint, p_presentment_cents bigint default null, p_presentment_currency text default null,
+  p_taxes_included boolean default true, p_processed_at timestamptz default null
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
-  v_referrer bigint;
-  v_referrer_now bigint;
-  v_processed timestamptz := coalesce(p_processed_at, now());
-  v_spent bigint;
-  v_mult integer;
+  v_email text := loyalty.normalize_email(p_email);
+  v_member uuid;
   v_points integer;
   v_balance bigint;
   v_referral text := null;
@@ -413,6 +547,7 @@ declare
 begin
   if p_order_id is null or p_order_id <= 0 then raise exception 'invalid order id'; end if;
   if p_amount_cents is null or p_amount_cents < 0 then raise exception 'invalid amount'; end if;
+  if v_email is null or v_email not like '%@%' then raise exception 'invalid email'; end if;
 
   perform loyalty.lock_order(p_order_id);
 
@@ -426,56 +561,30 @@ begin
   end if;
 
   if exists (select 1 from loyalty.orders where order_id = p_order_id) then
-    v_result := jsonb_build_object('outcome', 'already_awarded');
+    v_result := jsonb_build_object('outcome', 'already_recorded');
   else
-    perform loyalty.ensure_member(p_customer_id);
-
-    -- Lock the member rows in id order (customer, and their referrer if they
-    -- were referred) so concurrent orders cannot deadlock.
-    select referrer_id into v_referrer from loyalty.referrals where referee_id = p_customer_id;
-    perform 1 from loyalty.members
-      where customer_id in (p_customer_id, v_referrer)
-      order by customer_id for update;
-    select referrer_id into v_referrer_now from loyalty.referrals where referee_id = p_customer_id;
-    if v_referrer is distinct from v_referrer_now then
-      -- Claimed between our lookup and our lock: retry with the right lock order.
-      raise exception 'referral changed while locking' using errcode = '40001';
-    end if;
-
-    -- Tier rate from what was paid before this order (later orders are
-    -- re-priced by reconcile_customer if this one arrived late).
-    select coalesce(sum(amount_cents - refunded_cents), 0) into v_spent
-      from loyalty.orders
-     where customer_id = p_customer_id and (processed_at, order_id) < (v_processed, p_order_id);
-    v_mult := loyalty.multiplier_x10(v_spent);
-    v_points := (p_amount_cents * v_mult / 1000)::integer;
-
-    insert into loyalty.orders (order_id, customer_id, order_name, processed_at, amount_cents, multiplier_x10, points_earned,
+    insert into loyalty.orders (order_id, customer_email, shopify_customer_id, order_name, processed_at, amount_cents,
                                 presentment_cents, presentment_currency, taxes_included)
-    values (p_order_id, p_customer_id, p_order_name, v_processed, p_amount_cents, v_mult, v_points,
+    values (p_order_id, v_email, p_shopify_customer_id, p_order_name, coalesce(p_processed_at, now()), p_amount_cents,
             p_presentment_cents, p_presentment_currency, coalesce(p_taxes_included, true));
-    update loyalty.members
-       set total_spent_cents = total_spent_cents + p_amount_cents, updated_at = now()
-     where customer_id = p_customer_id;
-    if v_points > 0 then
-      perform loyalty.add_points(p_customer_id, 'order', v_points,
-        'Order ' || coalesce(p_order_name, '#' || p_order_id::text), p_order_id, null, null);
-    end if;
-
-    -- Refunds that arrived before this award.
+    -- Refunds that arrived before this order.
     if exists (select 1 from loyalty.refunds where order_id = p_order_id) then
-      perform loyalty.refresh_order_refunds(p_order_id,
-        (select max(refund_id) from loyalty.refunds where order_id = p_order_id));
+      perform loyalty.refresh_order_refunds(p_order_id, null);
     end if;
 
-    perform loyalty.reconcile_customer(p_customer_id);
-
-    select status into v_referral from loyalty.referrals
-      where referee_id = p_customer_id and qualifying_order_id = p_order_id;
-
-    select points into strict v_balance from loyalty.members where customer_id = p_customer_id;
-    v_result := jsonb_build_object(
-      'outcome', 'awarded', 'points', v_points, 'balance', v_balance, 'referral', v_referral);
+    select member_id into v_member from loyalty.members where email = v_email;
+    if v_member is null then
+      v_result := jsonb_build_object('outcome', 'stored_until_sign_up');
+    else
+      perform loyalty.lock_member(v_member);
+      v_points := loyalty.award_order(p_order_id, v_member);
+      perform loyalty.reconcile_member(v_member);
+      select status into v_referral from loyalty.referrals
+        where referee_id = v_member and qualifying_order_id = p_order_id;
+      select points into strict v_balance from loyalty.members where member_id = v_member;
+      v_result := jsonb_build_object(
+        'outcome', 'awarded', 'points', v_points, 'balance', v_balance, 'referral', v_referral);
+    end if;
   end if;
 
   if p_webhook_id is not null then
@@ -492,8 +601,7 @@ create function loyalty.record_refund(
 ) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
-  v_customer bigint;
-  v_referrer bigint;
+  v_member uuid;
   v_claw integer;
   v_result jsonb;
 begin
@@ -518,22 +626,19 @@ begin
           p_other_presentment_cents, p_line_tax_presentment_cents)
   on conflict (refund_id) do nothing;
 
-  select customer_id into v_customer from loyalty.orders where order_id = p_order_id;
-  if not found then
-    v_result := jsonb_build_object('outcome', 'stored_until_order_awarded');
+  if not exists (select 1 from loyalty.orders where order_id = p_order_id) then
+    v_result := jsonb_build_object('outcome', 'stored_until_order_arrives');
   else
-    -- Lock the customer and, if they were referred, their referrer, in id
-    -- order like every other path.
-    select referrer_id into v_referrer from loyalty.referrals where referee_id = v_customer;
-    perform 1 from loyalty.members
-      where customer_id in (v_customer, v_referrer)
-      order by customer_id for update;
-    if v_referrer is distinct from (select referrer_id from loyalty.referrals where referee_id = v_customer) then
-      raise exception 'referral changed while locking' using errcode = '40001';
+    select member_id into v_member from loyalty.orders where order_id = p_order_id;
+    if v_member is null then
+      perform loyalty.refresh_order_refunds(p_order_id, p_refund_id);
+      v_result := jsonb_build_object('outcome', 'stored_until_sign_up');
+    else
+      perform loyalty.lock_member(v_member);
+      v_claw := loyalty.refresh_order_refunds(p_order_id, p_refund_id);
+      perform loyalty.reconcile_member(v_member);
+      v_result := jsonb_build_object('outcome', 'applied', 'clawed_back', v_claw);
     end if;
-    v_claw := loyalty.refresh_order_refunds(p_order_id, p_refund_id);
-    perform loyalty.reconcile_customer(v_customer);
-    v_result := jsonb_build_object('outcome', 'applied', 'clawed_back', v_claw);
   end if;
 
   if p_webhook_id is not null then
@@ -543,68 +648,84 @@ begin
 end
 $$;
 
-create function loyalty.claim_referral(p_customer_id bigint, p_code text, p_has_shopify_orders boolean)
+create function loyalty.claim_referral(p_member_id uuid, p_email text, p_code text)
 returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   v_code text := upper(btrim(coalesce(p_code, '')));
-  v_referrer bigint;
+  v_referrer uuid;
+  m loyalty.members;
 begin
-  if p_has_shopify_orders is null then raise exception 'order check required'; end if;
   if v_code !~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$' then
     return jsonb_build_object('outcome', 'invalid_code');
   end if;
-  perform loyalty.ensure_member(p_customer_id);
-  select customer_id into v_referrer from loyalty.members where referral_code = v_code;
+  m := loyalty.ensure_member(p_member_id, p_email);
+  select member_id into v_referrer from loyalty.members where referral_code = v_code;
   if not found then
     return jsonb_build_object('outcome', 'invalid_code');
   end if;
-  if v_referrer = p_customer_id then
+  if v_referrer = p_member_id then
     return jsonb_build_object('outcome', 'self_referral');
   end if;
 
   perform 1 from loyalty.members
-    where customer_id in (p_customer_id, v_referrer)
-    order by customer_id for update;
+    where member_id in (p_member_id, v_referrer)
+    order by member_id for update;
 
-  if exists (select 1 from loyalty.referrals where referee_id = p_customer_id) then
+  if exists (select 1 from loyalty.referrals where referee_id = p_member_id) then
     return jsonb_build_object('outcome', 'already_claimed');
   end if;
-  if p_has_shopify_orders or exists (select 1 from loyalty.orders where customer_id = p_customer_id) then
+  if exists (select 1 from loyalty.orders where member_id = p_member_id or customer_email = m.email)
+     or exists (select 1 from loyalty.prior_customers where email = m.email) then
     return jsonb_build_object('outcome', 'not_new_customer');
   end if;
-  if exists (select 1 from loyalty.referrals where referee_id = v_referrer and referrer_id = p_customer_id) then
+  if exists (select 1 from loyalty.referrals where referee_id = v_referrer and referrer_id = p_member_id) then
     return jsonb_build_object('outcome', 'mutual_referral');
   end if;
 
-  insert into loyalty.referrals (referrer_id, referee_id, code) values (v_referrer, p_customer_id, v_code);
+  insert into loyalty.referrals (referrer_id, referee_id, code) values (v_referrer, p_member_id, v_code);
   return jsonb_build_object('outcome', 'pending');
 end
 $$;
 
-create function loyalty.get_member(p_customer_id bigint) returns jsonb
+-- Everything the app shows: balance, tier, referral, history and the orders
+-- matched to the member. Creates the member on first use and gives them any
+-- orders that were waiting for their email.
+create function loyalty.get_member(p_member_id uuid, p_email text) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   m loyalty.members;
 begin
-  perform loyalty.ensure_member(p_customer_id);
+  m := loyalty.ensure_member(p_member_id, p_email);
+  if exists (select 1 from loyalty.orders where customer_email = m.email and member_id is null) then
+    perform loyalty.link_member_orders(p_member_id);
+  end if;
   -- Hold the member row so no award or claim commits while we read the
   -- balance, history and referral counts.
-  select * into strict m from loyalty.members where customer_id = p_customer_id for share;
+  select * into strict m from loyalty.members where member_id = p_member_id for share;
   return jsonb_build_object(
-    'customerId', m.customer_id::text,
+    'memberId', m.member_id,
+    'email', m.email,
     'points', m.points,
     'tier', loyalty.tier(m.total_spent_cents),
     'totalSpentCents', m.total_spent_cents,
     'referralCode', m.referral_code,
-    'referralsCompleted', (select count(*) from loyalty.referrals where referrer_id = m.customer_id and status = 'completed'),
-    'referralsPending', (select count(*) from loyalty.referrals where referrer_id = m.customer_id and status = 'pending'),
-    'referredStatus', (select status from loyalty.referrals where referee_id = m.customer_id),
+    'referralsCompleted', (select count(*) from loyalty.referrals where referrer_id = m.member_id and status = 'completed'),
+    'referralsPending', (select count(*) from loyalty.referrals where referrer_id = m.member_id and status = 'pending'),
+    'referredStatus', (select status from loyalty.referrals where referee_id = m.member_id),
     'transactions', coalesce((
       select jsonb_agg(jsonb_build_object(
                'id', l.id::text, 'date', l.created_at, 'kind', l.kind, 'points', l.points,
                'balanceAfter', l.balance_after, 'description', l.description) order by l.id desc)
-        from (select * from loyalty.ledger where customer_id = m.customer_id order by id desc limit 50) l
+        from (select * from loyalty.ledger where member_id = m.member_id order by id desc limit 50) l
+    ), '[]'::jsonb),
+    'orders', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'orderId', o.order_id::text, 'name', o.order_name, 'processedAt', o.processed_at,
+               'amountCents', o.amount_cents, 'refundedCents', o.refunded_cents,
+               'points', o.points_earned - o.points_clawed) order by o.processed_at desc, o.order_id desc)
+        from (select * from loyalty.orders where member_id = m.member_id
+               order by processed_at desc, order_id desc limit 50) o
     ), '[]'::jsonb)
   );
 end

@@ -5,11 +5,12 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["emisapp", "shop.61337632846.app"],
+    "scheme": "emisapp",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "asia.emis.app",
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Used to scan QR codes for local device-to-device data transfer",
         "NSPhotoLibraryUsageDescription": "Used to attach photos to wound records",
@@ -51,6 +52,7 @@
       "expo-sqlite",
       "expo-sharing",
       "expo-secure-store",
+      "expo-apple-authentication",
       "expo-image",
       [
         "expo-camera",

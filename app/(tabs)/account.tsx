@@ -6,8 +6,9 @@ import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { SIGN_IN_AVAILABLE } from '@/lib/auth/config';
-import { signIn, signOut } from '@/lib/auth/session';
+import SignInPanel from '@/components/SignInPanel';
+import { AUTH_AVAILABLE } from '@/lib/auth/config';
+import { signOut } from '@/lib/auth/session';
 import { LOYALTY_AVAILABLE, claimReferral } from '@/lib/loyalty';
 import { STORE_URL } from '@/lib/shopify';
 import { sessionKey, useMembership } from '@/lib/useMembership';
@@ -17,9 +18,7 @@ export default function AccountScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme];
   const router = useRouter();
-  const { session, ready, membership, loading, error, reload } = useMembership();
-  const [signingIn, setSigningIn] = useState(false);
-  const [signInMsg, setSignInMsg] = useState<string | null>(null);
+  const { user, ready, membership, loading, error, reload } = useMembership();
   const [showReferralInput, setShowReferralInput] = useState(false);
   const [referralInput, setReferralInput] = useState('');
   const [claiming, setClaiming] = useState(false);
@@ -27,27 +26,18 @@ export default function AccountScreen() {
   const [referralMsg, setReferralMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // A different account (or signing out) starts the referral form afresh.
-  const key = sessionKey(session);
+  const key = sessionKey(user);
   useEffect(() => {
     setReferralMsg(null);
     setReferralInput('');
     setShowReferralInput(false);
   }, [key]);
 
-  const customer = session?.customer;
-  const displayName = customer?.firstName || (session ? 'EMIS+ member' : 'Guest');
+  const displayName = user?.name || (user ? 'EMIS+ member' : 'Guest');
   const tier = TIER_CONFIG[membership?.tier ?? 'silver'];
   const totalSpent = (membership?.totalSpentCents ?? 0) / 100;
   const nextTier = membership?.tier === 'silver' ? TIER_CONFIG.gold : membership?.tier === 'gold' ? TIER_CONFIG.diamond : null;
   const progress = nextTier ? Math.min(100, (totalSpent / nextTier.minSpend) * 100) : 100;
-
-  async function handleSignIn() {
-    setSigningIn(true);
-    setSignInMsg(null);
-    const result = await signIn();
-    setSigningIn(false);
-    if (result && !result.ok) setSignInMsg(result.message);
-  }
 
   async function handleApplyReferral() {
     if (!referralInput.trim() || claiming) return;
@@ -79,7 +69,7 @@ export default function AccountScreen() {
     { icon: 'cube-outline', label: 'Order History', action: () => router.push('/orders') },
     { icon: 'call-outline', label: 'Contact Us', action: () => {} },
     { icon: 'settings-outline', label: 'Settings', action: () => {} },
-    ...(session ? [{ icon: 'log-out-outline', label: 'Sign out', action: () => signOut() }] : []),
+    ...(user ? [{ icon: 'log-out-outline', label: 'Sign out', action: () => signOut() }] : []),
   ];
 
   const referredLine =
@@ -102,7 +92,7 @@ export default function AccountScreen() {
           <View style={{ flex: 1 }}>
             <Text style={[styles.name, { color: colors.text }]}>{displayName}</Text>
             <Text style={[styles.email, { color: colors.textSecondary }]}>
-              {customer?.email || (session ? 'Signed in with emis.asia' : 'Not signed in')}
+              {user?.email || (user ? 'Signed in' : 'Not signed in')}
             </Text>
           </View>
           {membership && (
@@ -114,7 +104,7 @@ export default function AccountScreen() {
 
         {!ready ? (
           <ActivityIndicator style={{ marginTop: 24 }} color={colors.primary} />
-        ) : !SIGN_IN_AVAILABLE ? (
+        ) : !AUTH_AVAILABLE ? (
           <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.infoTitle, { color: colors.text }]}>EMIS+ accounts are coming soon</Text>
             <Text style={[styles.infoBody, { color: colors.textSecondary }]}>
@@ -125,26 +115,13 @@ export default function AccountScreen() {
               <Text style={styles.btnText}>Open my emis.asia account</Text>
             </TouchableOpacity>
           </View>
-        ) : !session ? (
-          <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.infoTitle, { color: colors.text }]}>Sign in to EMIS+</Text>
-            <Text style={[styles.infoBody, { color: colors.textSecondary }]}>
-              Use the email address you shop with on emis.asia. You will see your orders and collect Health Points on paid orders.
-            </Text>
-            <TouchableOpacity
-              style={[styles.btn, { backgroundColor: colors.primary, opacity: signingIn ? 0.6 : 1 }]}
-              onPress={handleSignIn}
-              disabled={signingIn}
-            >
-              <Text style={styles.btnText}>{signingIn ? 'Opening sign-in...' : 'Sign in with emis.asia'}</Text>
-            </TouchableOpacity>
-            {signInMsg && <Text style={[styles.feedback, { color: colors.danger }]}>{signInMsg}</Text>}
-          </View>
+        ) : !user ? (
+          <SignInPanel />
         ) : !LOYALTY_AVAILABLE ? (
           <View style={[styles.infoCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             <Text style={[styles.infoTitle, { color: colors.text }]}>Health Points launch soon</Text>
             <Text style={[styles.infoBody, { color: colors.textSecondary }]}>
-              You are signed in. Your orders are under Order History below.
+              You are signed in. Points for paid orders will show here once Health Points start.
             </Text>
           </View>
         ) : (

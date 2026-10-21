@@ -20,7 +20,7 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
   return {
     async recordPaidOrder(o) {
       const [row] = await sql`
-        select loyalty.record_paid_order(${o.webhookId}, ${o.orderId}::bigint, ${o.customerId}::bigint,
+        select loyalty.record_paid_order(${o.webhookId}, ${o.orderId}::bigint, ${o.email}, ${o.customerId}::bigint,
                                          ${o.orderName}, ${o.amountCents}::bigint,
                                          ${o.presentmentCents ?? null}::bigint, ${o.presentmentCurrency ?? null},
                                          ${o.taxesIncluded ?? true}, ${o.processedAt ?? null}::timestamptz) as r`;
@@ -34,13 +34,12 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
                                      ${r.otherPresentmentCents ?? null}::bigint, ${r.lineTaxPresentmentCents ?? null}::bigint) as r`;
       return row.r;
     },
-    async getMember(customerId) {
-      const [row] = await sql`select loyalty.get_member(${customerId}::bigint) as r`;
+    async getMember(m) {
+      const [row] = await sql`select loyalty.get_member(${m.memberId}::uuid, ${m.email}) as r`;
       return row.r;
     },
-    async claimReferral(customerId, code, hasShopifyOrders) {
-      const [row] = await sql`
-        select loyalty.claim_referral(${customerId}::bigint, ${code}, ${hasShopifyOrders}) as r`;
+    async claimReferral(m, code) {
+      const [row] = await sql`select loyalty.claim_referral(${m.memberId}::uuid, ${m.email}, ${code}) as r`;
       return row.r as { outcome: ReferralOutcome };
     },
     end: () => sql.end({ timeout: 5 }),

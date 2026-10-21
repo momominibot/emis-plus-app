@@ -1,113 +1,127 @@
 # EMIS+ accounts: sign-in, orders, Health Points, referrals
 
-Status (20 Oct 2026): built and tested locally on branch `claude/emis-customer-accounts`.
-Nothing is deployed, registered or migrated. The app hides sign-in and points until the
-environment variables below exist, so a web redeploy today would still show "coming soon".
+Status (21 Oct 2026): built and tested locally on branch `claude/emis-customer-accounts`.
+Nothing is deployed, created, registered or migrated. The app hides sign-in and points until
+the environment variables below exist, so a web redeploy today would still show "coming soon".
 
 ## How it fits together
 
 ```
-EMIS+ app ──PKCE──▶ Shopify Customer Account API (login, the customer's own orders)
-    │  Bearer <customer token>
+EMIS+ app ── Supabase Auth ── email 6-digit code, Sign in with Apple, Google
+    │  Bearer <Supabase access token>
     ▼
-Supabase edge function `loyalty` ──"who is this token?"──▶ Customer Account API
-    │                                   (customer ID comes from Shopify, never the app)
+Edge function `loyalty` ── auth.getUser(token): user id + confirmed email
+    │
     ▼
-Postgres schema `loyalty` (ledger keyed to the Shopify customer ID)
+Postgres schema `loyalty` (ledger keyed to the Supabase user id)
     ▲
-Supabase edge function `shopify-webhook` ◀── Shopify orders/paid, refunds/create (HMAC signed)
+Edge function `shopify-webhook` ◀── Shopify orders/paid, refunds/create (HMAC signed)
+                                    orders matched to users by email (lowercased, trimmed)
 ```
 
-- No Admin API token or other private token is used anywhere, client or server.
-- Catalogue reads stay on tokenless Storefront API (`lib/shopify.ts`, unchanged).
+- **Sign-in** (`lib/auth/`): Supabase Auth via `@supabase/supabase-js`.
+  - Email: `signInWithOtp` sends a 6-digit code, `verifyOtp({ type: 'email' })` signs in. New emails create an account.
+  - Apple: native sheet on iOS (`expo-apple-authentication` identity token to `signInWithIdToken`); browser
+    `signInWithOAuth` on Android and web.
+  - Google: browser `signInWithOAuth` everywhere. Supabase's Expo guide uses this for mobile; the free native
+    Google Sign-In library cannot pass the nonce Supabase needs for `signInWithIdToken`.
+  - Redirect sign-ins use PKCE. Web returns to `/auth/callback`, native to `emisapp://auth/callback`.
+  - Sessions: AsyncStorage on native, localStorage on web, refreshed by supabase-js (paused in the background on native).
+- **Identity link**: a member is a Supabase user. Orders carry the Shopify order email; they are matched to
+  the member whose *confirmed* email is the same. Orders placed before the customer signs up wait and are
+  awarded the next time they open the app. `members.shopify_customer_id` is filled from matched orders so a
+  later migration can link by Shopify customer ID.
+- **Orders screen**: lists the member's matched paid orders from our own table (no Shopify customer API),
+  with points per order and a link to emis.asia for full details and tracking.
+- No Admin API token or other private Shopify token is used anywhere. Catalogue reads stay on tokenless
+  Storefront API (`lib/shopify.ts`, unchanged).
+- The earlier Shopify Customer Account API sign-in was removed (it is in git history at `da333fa`).
 
-### Why Supabase and not customer metafields
+### Why the ledger is in Postgres
 
-Points need exactly-once awards per order, single-use referral claims, atomic balance updates,
-a readable history and reverse lookup from a referral code to its owner. Postgres gives unique
-constraints, row locks and one transaction per webhook. Metafields would need an Admin token
-(the old one is dead), have no transactions (retried webhooks race on read-modify-write), no
-lookup from code to customer and no ledger.
+Points need exactly-once awards per order, single-use referral claims, atomic balances, a readable history and
+reverse lookup from a referral code to its owner: unique constraints, row locks and one transaction per event.
 
 ## Rules (please confirm, they are business choices)
 
 | Rule | Current setting |
 |---|---|
 | Earning | 1 point per S$1 of the order subtotal (after discounts, before shipping), rounded down |
-| Tiers | Net spend (after refunds) on orders paid before this one, by Shopify's `processed_at`: Silver 1x, Gold from S$500 1.5x, Diamond from S$2,000 2x (mirrors `TIER_CONFIG`). If a webhook arrives late, later orders are re-priced and the difference shows as a "Tier rate updated" entry |
-| Which orders | `orders/paid` only; SGD; customer attached (guest checkouts earn nothing); Shopify test orders ignored |
-| Refunds | Refunded merchandise takes back exactly the points it earned: the larger of the refunded items and the money returned minus shipping, shipping tax, duties, extra fees (and item tax when prices exclude tax). Pending refund transactions count. Money returned in the customer's currency converts at the order's own rate. Shipping-only refunds take nothing. Each time a refund arrives the order's refunds are recalculated from all of them in refund-ID order, so the result never depends on arrival order (a correction shows as "Refund recalculated") |
-| Referral | Friend enters the code in the app before their first order; they must have no orders at all; one claim per customer ever; not their own code; not back to someone they referred |
-| Referral bonus | 100 points each, based on the friend's first order of at least S$1 by payment time (not by webhook arrival); both reversed if refunds leave less than S$1 of that order (including refunds that reached us before the payment). Foreign-currency refunds are totalled in the customer's currency before converting, so shipping refunds in between do not shift the result |
+| Tiers | Net spend (after refunds) on orders paid before this one, by Shopify's `processed_at`: Silver 1x, Gold from S$500 1.5x, Diamond from S$2,000 2x (mirrors `TIER_CONFIG`). A late webhook re-prices later orders ("Tier rate updated") |
+| Which orders | `orders/paid` only; SGD; any order with an email, guest checkouts included; Shopify test orders ignored |
+| Refunds | Refunded merchandise takes back exactly the points it earned: the larger of the refunded items and the money returned minus shipping, shipping tax, duties, extra fees (and item tax when prices exclude tax). Pending refund money counts. Customer-currency refunds convert at the order's rate. Each refund recalculates the order from all its refunds in refund-ID order |
+| Referral | A signed-in member enters a friend's code before their first order: no order known for their email, not on the earlier-customers list, one claim ever, not their own code, not back to someone they referred |
+| Referral bonus | 100 points each, based on the friend's first order of at least S$1 by payment time; reversed if refunds leave less than S$1 of it |
 | Not built | Redeeming points, expiry, backfill of orders paid before launch |
 
-`TIER_CONFIG` perks in `lib/types.ts` (birthday voucher, free shipping, free gift) are copy only;
-nothing delivers them. Confirm or remove before launch.
+`TIER_CONFIG` perks in `lib/types.ts` (birthday voucher, free shipping, free gift) are copy only; nothing delivers them.
 
-## Go-live steps (each needs Jamie's go-ahead)
+## Go-live gates (each needs Jamie's OK)
 
-1. **Shopify admin, Headless channel**: create storefront "EMIS+ app" > Customer Account API settings > public client(s):
-   - Web: callback `https://momominibot.github.io/emis-plus-app/auth/callback`, JavaScript origin
-     `https://momominibot.github.io`, logout URI `https://momominibot.github.io/emis-plus-app/account`.
-   - Mobile: callback `shop.61337632846.app://auth/callback` (scheme already added to `app.json`).
-   - If Shopify needs separate web and mobile clients, use both client IDs (env vars below).
-2. **Supabase**: new project `emis-loyalty`, region `ap-southeast-1` (Singapore). Paid resource: confirm cost first.
-   - Apply `supabase/migrations/20261020120000_loyalty.sql` as the `postgres` role (the role behind
-     `SUPABASE_DB_URL`, which the functions use). Dry run first: run it inside `begin; ... rollback;`.
-   - Deploy `shopify-webhook` and `loyalty` with `verify_jwt = false` (they authenticate in code).
-   - Secrets: `SHOPIFY_WEBHOOK_SECRET`, `LOYALTY_ALLOWED_ORIGINS=https://momominibot.github.io`.
-     Optional: `SHOPIFY_SHOP_DOMAIN` (default `4a6920-67.myshopify.com`), `CUSTOMER_ACCOUNT_API_URL`, `ALLOW_TEST_ORDERS`.
-3. **Shopify webhooks**: `orders/paid` and `refunds/create`, JSON, to
-   `https://<project-ref>.supabase.co/functions/v1/shopify-webhook`. If created in
-   Settings > Notifications > Webhooks, the signing secret is shown on that page; put it in `SHOPIFY_WEBHOOK_SECRET`.
-4. **App config**, then rebuild:
-   - `EXPO_PUBLIC_SHOPIFY_CA_CLIENT_ID` (or `_WEB` and `_NATIVE`), `EXPO_PUBLIC_LOYALTY_API_URL=https://<ref>.supabase.co/functions/v1/loyalty`.
-   - Web: `scripts/deploy-web.sh` (now exports with `--clear` so new env values are not served from Metro's cache).
-   - Native: new EAS build (adds `expo-crypto` and the `shop.61337632846.app` scheme; an OTA update is not enough).
-5. **Old Vercel `backend`**: `backend-theta-ashen-89.vercel.app/api/loyalty/points` and `/referral` still answer with
-   fake data and `/api/webhooks/shopify` skips HMAC when no secret is set. The source is deleted on this branch;
-   the live routes go away only with a redeploy or by removing the project.
-6. **Privacy notice**: mention that Health Points keep the Shopify customer ID, order IDs and amounts in Supabase (Singapore).
+1. **Supabase project.** No project named "emis" is in the connected Supabase account (it lists mcsg-lease-desk and
+   ovumind, active; ranklore-dashboard and "momominibot's Project", paused). Either point to the existing one or
+   create `emis` in `ap-southeast-1` (paid; confirm cost). Everything below lives in that project.
+2. **Database.** Apply `supabase/migrations/20261020120000_loyalty.sql` as the `postgres` role (dry run inside
+   `begin; ... rollback;` first). Optionally import earlier customers: `insert into loyalty.prior_customers` the
+   lowercased emails of a Shopify customer export with orders, so they cannot claim referral bonuses as "new".
+3. **Edge functions.** Deploy `shopify-webhook` and `loyalty` with `verify_jwt = false` (both authenticate in code).
+   Secrets: `SHOPIFY_WEBHOOK_SECRET`, `LOYALTY_ALLOWED_ORIGINS=https://momominibot.github.io`.
+4. **Auth URL configuration.** Site URL and redirect URLs: `https://momominibot.github.io/emis-plus-app/auth/callback`
+   and `emisapp://auth/callback`.
+5. **Email code.** Auth > Email Templates > Magic Link: show `{{ .Token }}` instead of `{{ .ConfirmationURL }}`
+   (for example "Your EMIS+ code is {{ .Token }}"). OTP length 6, expiry kept short (Supabase allows at most 1 day).
+6. **Custom SMTP (required).** Without it Supabase only emails the project's own team members, so customers get no
+   code. Set a sending service and From address (for example no-reply@ an emis.asia sending subdomain with SPF,
+   DKIM and DMARC), then raise the Auth email rate limit (30/hour after enabling custom SMTP). Supabase also
+   recommends CAPTCHA against bulk sign-up abuse.
+7. **Apple.** Apple Developer: enable Sign in with Apple on App ID `asia.emis.app` (the app now declares the
+   entitlement); create a Services ID with return URL `https://<project-ref>.supabase.co/auth/v1/callback`, and a
+   Sign in with Apple key. Supabase Apple provider: client IDs with the Services ID first, then `asia.emis.app`;
+   the generated client secret expires every 6 months and must be renewed.
+8. **Google.** Google Cloud: OAuth consent screen, then an OAuth client (type Web) with redirect URI
+   `https://<project-ref>.supabase.co/auth/v1/callback`; client ID and secret into the Supabase Google provider.
+9. **Shopify webhooks.** `orders/paid` and `refunds/create`, JSON, to
+   `https://<project-ref>.supabase.co/functions/v1/shopify-webhook`; put the signing secret in `SHOPIFY_WEBHOOK_SECRET`.
+10. **App config and builds.** `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
+    `EXPO_PUBLIC_AUTH_PROVIDERS=email,apple,google` (list only providers set up in 7-8),
+    `EXPO_PUBLIC_LOYALTY_ENABLED=true` (after 2-3). Web: `scripts/deploy-web.sh` (exports with `--clear`).
+    Native: new EAS build (adds supabase-js, expo-apple-authentication and the Apple entitlement; an OTA update is not enough).
+11. **Old Vercel `backend`.** `backend-theta-ashen-89.vercel.app/api/loyalty/*` still answers with fake data and its
+    webhook stub skips HMAC without a secret. Source is deleted here; remove or redeploy the project.
+12. **Privacy notice.** Mention that sign-in emails live in Supabase Auth and Health Points keep the user id, order
+    IDs, order emails and amounts (Supabase, Singapore).
 
-### First live checks after go-live
+### First live checks
 
-- Sign in on web and on a device build; Order History lists real orders.
-- Place a small real order with a test customer; `orders/paid` should award points (Supabase logs show `outcome`).
-- Refund it; points come back off. Shopify > Settings > Notifications > Webhooks shows delivery status.
-- Verify the server-side token check: the `loyalty` function calls the Customer Account API with the app's token and
-  forwards the browser's `Origin`. That a web-client token is accepted from a server with that header is
-  inferred from Shopify's docs and Hydrogen, not yet seen live.
+- Sign in with each method on web and a device build; check the code email arrives from the custom sender.
+- Place a small real order with a signed-in test customer's email; Order History and points should appear.
+  Refund it; the points come back off. Shopify's webhook page shows delivery status.
 
 ## Known limits and follow-ups
 
+- Apple "Hide My Email" relay addresses will not match orders placed with the customer's real email; those
+  customers should sign in with email or Google, or use the same address at checkout.
+- "New customer" for referrals means no order known since Health Points started, plus the optional earlier-customers
+  import; without the import, a long-time customer could claim a code once.
+- An order that lands while its customer is signing up for the first time is picked up on their next app open.
 - Shopify does not guarantee webhook delivery. A nightly reconciliation (Admin API `read_orders`, feeding the same
-  idempotent SQL functions) would close the gap; it needs a new Admin token, so it is not built. Late or out-of-order
-  deliveries are already handled: balances end up the same whatever order the webhooks arrive in (tested over every
-  arrival order of a 4-event history).
+  functions) would close the gap; it needs a new Admin token, so it is not built. Out-of-order delivery is handled.
+- Refunds are counted when created (pending money counts); a refund that later fails keeps its clawback until staff
+  adjust it (Shopify documents no webhook tying a failed refund payment back to its refund).
 - An order edited after payment does not earn on the added amount.
-- Refunds are counted when created (pending money counts), not when the refund settles; a refund that later fails
-  keeps its clawback until staff adjust it. Shopify does not document a webhook that ties a failed refund
-  transaction back to its refund, so this is not automated. Each refund is recorded as first reported; a later change to the same
-  refund ID is not picked up (Shopify sends refunds/create once per refund).
-- Web stores tokens in `localStorage` (native uses the Keychain/Keystore). Any XSS on the web origin could read them.
-  Every write of the stored session (refresh, sign-in, sign-out, expiry) runs under one cross-tab Web Lock; refresh
-  and expiry re-read storage inside it before writing, so one tab cannot write back an account another tab signed
-  out of. The only request made while holding the lock is the token request (15 second limit including the
-  response body; Shopify's endpoint discovery is fetched beforehand with its own 10 second limit), so sign-out waits
-  at most about 15 seconds for a refresh in another tab, and the screen shows signed-out at once. Browsers without
-  the Web Locks API (pre-2022) fall back to the re-read alone, which narrows but does not close that race.
 
 ## Tests
 
 ```bash
-supabase/tests/run.sh            # 55 Deno tests on a throwaway local Postgres 17 (needs brew postgresql@17, deno)
-npx tsc --noEmit                 # app code (supabase/ and backend/ are excluded; deno checks supabase/)
-python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 27 browser checks, see the file header
+supabase/tests/run.sh            # 67 Deno tests: real Postgres 17 for the ledger, mocked supabase-js for sign-in
+npx tsc --noEmit                 # app code (supabase/ and backend/ excluded; deno checks supabase/)
+python3 scripts/test-web-auth.py <web-test-export> <web-plain-export>   # 20 browser checks, see the file header
 ```
 
-`run.sh` covers: awards, idempotency (duplicate deliveries, 24 parallel deliveries), tier boundaries vs `TIER_CONFIG`,
-partial/over/duplicate refunds, amount-only, foreign-currency, tax-exclusive and goodwill refunds, part refunds in a foreign currency, refunds before
-awards (including a full refund before the payment), 150 parallel refund-vs-award races, every referral rule,
-mutual-claim, claim-vs-payment and refund-vs-claim races, every arrival order of paid/refund webhooks, bonus reversal, API roles locked out, referral code alphabet,
-HMAC (known vector, tampering), 18-digit IDs, CORS, and the RFC 7636 PKCE vector. Removing the per-order lock or the
-member lock makes the concurrency tests fail (checked by mutation).
+`run.sh` covers: awards, idempotency, tiers, refunds (partial, amount-only, foreign currency, tax-exclusive, fees,
+before the order, every arrival order), referral rules and reversal, orders before sign-up, email matching
+(case, guest checkout, changes), earlier-customer list, concurrency (parallel deliveries, refund-vs-award,
+claims, 30 events for one customer at once), API roles locked out, HMAC, 18-digit IDs, CORS, Supabase-user
+checks (unconfirmed email refused), and the app's email OTP, Apple id-token and OAuth PKCE steps against a
+mocked supabase-js. The browser test drives the real web export with real supabase-js against stand-in Auth
+endpoints that verify the PKCE S256 challenge.

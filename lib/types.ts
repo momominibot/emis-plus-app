@@ -36,9 +36,20 @@ export interface LedgerEntry {
   description: string;
 }
 
-/** The signed-in customer's membership, as returned by GET /loyalty/me. */
+/** A paid emis.asia order matched to the member by email. */
+export interface MemberOrder {
+  orderId: string;
+  name: string | null;
+  processedAt: string;
+  amountCents: number;
+  refundedCents: number;
+  points: number;
+}
+
+/** The signed-in member's Health Points, as returned by GET /loyalty/me. */
 export interface Membership {
-  customerId: string;
+  memberId: string;
+  email: string;
   points: number;
   tier: MemberTier;
   totalSpentCents: number;
@@ -47,6 +58,7 @@ export interface Membership {
   referralsPending: number;
   referredStatus: 'pending' | 'completed' | 'reversed' | null;
   transactions: LedgerEntry[];
+  orders: MemberOrder[];
 }
 
 export interface TierPerk {

@@ -54,6 +54,13 @@ export function moneyToCents(value: unknown): number {
 
 type Obj = Record<string, unknown>;
 
+/** "  Pat@Example.COM " -> "pat@example.com"; null if it is not an email address. */
+export function normalizeEmail(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const email = value.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254 ? email : null;
+}
+
 /** A Shopify timestamp ("2026-10-01T11:00:00+08:00"), or null if it is not one. */
 function isoTime(value: unknown): string | null {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
@@ -72,7 +79,10 @@ export type PaidOrderParse =
   | {
       ok: true;
       orderId: string;
-      customerId: string;
+      /** Lowercased, trimmed: how orders are matched to members. */
+      email: string;
+      /** Shopify customer ID when the order has a customer (kept for a later ID-based link). */
+      customerId: string | null;
       orderName: string | null;
       amountCents: number;
       presentmentCents: number | null;
@@ -95,7 +105,9 @@ export function parsePaidOrder(payload: unknown, opts: { currency: string; allow
   if (!order) return { ok: false, reason: 'invalid_payload' };
   if (order.test === true && !opts.allowTestOrders) return { ok: false, reason: 'ignored_test_order' };
   const customer = obj(order.customer);
-  if (!customer) return { ok: false, reason: 'ignored_guest_checkout' };
+  // The customer's email, else the order's contact email (guest checkouts count too).
+  const email = normalizeEmail(customer?.email) ?? normalizeEmail(order.email) ?? normalizeEmail(order.contact_email);
+  if (!email) return { ok: false, reason: 'ignored_no_email' };
   if (typeof order.financial_status !== 'string' || !PAID_STATUSES.has(order.financial_status)) {
     return { ok: false, reason: 'ignored_not_paid' };
   }
@@ -109,7 +121,10 @@ export function parsePaidOrder(payload: unknown, opts: { currency: string; allow
     return {
       ok: true,
       orderId: idFrom(order.admin_graphql_api_id ?? order.id, 'Order'),
-      customerId: idFrom(customer.admin_graphql_api_id ?? customer.id, 'Customer'),
+      email,
+      customerId: customer && (customer.admin_graphql_api_id ?? customer.id) != null
+        ? idFrom(customer.admin_graphql_api_id ?? customer.id, 'Customer')
+        : null,
       orderName: typeof order.name === 'string' ? order.name.slice(0, 64) : null,
       amountCents: moneyToCents(subtotal.amount),
       presentmentCents: presentmentCurrency ? moneyToCents(presentment!.amount) : null,

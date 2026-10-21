@@ -19,7 +19,7 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
    - Intake & output chart
    - Vitals monitor (BP, HR, temp, SpO2, blood sugar, weight)
    - Export to doctor (CSV/summary) and device-to-device transfer
-5. **Account** - Sign in with the customer's emis.asia account (Shopify Customer Account API), Health Points and tier, points history, referral code, order history
+5. **Account** - Sign in (email code, Apple, Google via Supabase Auth), Health Points and tier, points history, referral code, order history
 
 ### AI Product Assistant
 - Chat-based product selection helper
@@ -27,9 +27,9 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 - Quick prompts for common questions
 
 ### Accounts and Health Points
-- Sign-in: Shopify Customer Account API, public client with PKCE (`lib/auth/`)
-- Orders: read with the customer's own token (`lib/customer.ts`)
-- Health Points: Supabase ledger keyed to the Shopify customer ID, written only by HMAC-verified `orders/paid` and `refunds/create` webhooks (`supabase/`)
+- Sign-in: Supabase Auth, 6-digit email code, Sign in with Apple, Google (`lib/auth/`)
+- Health Points: Supabase ledger keyed to the Supabase user, written only by HMAC-verified `orders/paid` and `refunds/create` webhooks and matched to users by confirmed email (`supabase/`)
+- Orders: the member's matched paid orders, with points, plus a link to emis.asia for details
 - Silver (1x points), Gold (1.5x, S$500), Diamond (2x, S$2,000); referral bonus of 100 points each after the friend's first paid order
 - Not live yet: see [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for the rules, tests and go-live steps
 
@@ -55,8 +55,10 @@ npm run web        # Web preview
 Create `.env` in the app root (client-side only, no secrets):
 ```
 EXPO_PUBLIC_BACKEND_URL=https://your-backend.vercel.app
-EXPO_PUBLIC_SHOPIFY_CA_CLIENT_ID=<Customer Account API public client ID>   # sign-in hidden while unset
-EXPO_PUBLIC_LOYALTY_API_URL=https://<ref>.supabase.co/functions/v1/loyalty # points hidden while unset
+EXPO_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co          # sign-in hidden while unset
+EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...      # public by design
+EXPO_PUBLIC_AUTH_PROVIDERS=email,apple,google                # only providers set up in Supabase
+EXPO_PUBLIC_LOYALTY_ENABLED=true                             # once the loyalty functions are deployed
 ```
 All Shopify and AI API keys live only on the backend (Vercel env vars). Never put secrets in `EXPO_PUBLIC_` variables.
 
@@ -121,8 +123,8 @@ emis-app/
   lib/
     shopify.ts       # Shopify API client
     db.ts            # SQLite (medical data)
-    auth/            # Customer Account API sign-in (PKCE), token storage
-    customer.ts      # The signed-in customer's orders
+    supabase.ts      # Supabase client (Auth)
+    auth/            # Sign-in steps (email code, Apple, Google) and session hook
     loyalty.ts       # Health Points API client
     ai.ts            # AI assistant
     export.ts        # CSV/export utilities
@@ -137,5 +139,5 @@ emis-app/
 - Medical tool data (wound, ostomy, vitals, etc.) is stored ONLY in local SQLite on the device
 - No medical data is collected, uploaded, or synced to any server
 - Device-to-device transfer uses local file sharing (AirDrop/email/messaging)
-- Sign-in tokens stay on the device (Keychain/Keystore on native, browser storage on web)
-- Health Points keep only the Shopify customer ID, order IDs and amounts (Supabase, Singapore region)
+- Sign-in sessions stay on the device (AsyncStorage on native, browser storage on web); accounts live in Supabase Auth
+- Health Points keep the user id, order IDs, order emails and amounts (Supabase, Singapore region)

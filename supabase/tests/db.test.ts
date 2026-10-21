@@ -6,8 +6,26 @@ import { dbTest, type TestDb } from './pg.ts';
 let seq = 0;
 const wh = () => `wh-${Date.now()}-${seq++}`;
 
-function paid(t: TestDb, order: number | string, customer: number | string, cents: number, webhookId: string | null = wh()) {
-  return t.db.recordPaidOrder({ webhookId, orderId: String(order), customerId: String(customer), orderName: `#${order}`, amountCents: cents });
+// Customer n is the Supabase user uid(n) with the confirmed email mail(n).
+const uid = (n: number | string) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const mail = (n: number | string) => `c${n}@example.com`;
+const who = (n: number | string) => ({ memberId: uid(n), email: mail(n) });
+/** The customer opens the app signed in (creates the member, links waiting orders). */
+const signIn = (t: TestDb, n: number | string) => t.db.getMember(who(n));
+const claim = (t: TestDb, n: number | string, code: string) => t.db.claimReferral(who(n), code);
+
+/** orders/paid for customer n's email, with the customer already signed up. */
+async function paid(t: TestDb, order: number | string, customer: number | string, cents: number, webhookId: string | null = wh()) {
+  await signIn(t, customer);
+  return t.db.recordPaidOrder({ webhookId, orderId: String(order), email: mail(customer), customerId: null, orderName: `#${order}`, amountCents: cents });
+}
+type OrderExtras = { presentmentCents?: number; presentmentCurrency?: string; taxesIncluded?: boolean; processedAt?: string };
+async function paidWith(t: TestDb, order: number, customer: number, cents: number, extras: OrderExtras) {
+  await signIn(t, customer);
+  return t.db.recordPaidOrder({
+    webhookId: wh(), orderId: String(order), email: mail(customer), customerId: null, orderName: '#' + order,
+    amountCents: cents, ...extras,
+  });
 }
 /** Item refund: `cents` of refunded line items, the same money returned. */
 function refund(t: TestDb, refundId: number | string, order: number | string, cents: number, webhookId: string | null = wh()) {
@@ -38,19 +56,19 @@ async function paidRetrying(t: TestDb, order: number, customer: number, cents: n
   }
 }
 // deno-lint-ignore no-explicit-any
-const member = async (t: TestDb, c: number | string) => (await t.db.getMember(String(c))) as any;
+const member = async (t: TestDb, c: number | string) => (await t.db.getMember(who(c))) as any;
 const points = async (t: TestDb, c: number | string) => (await member(t, c)).points as number;
 
 /** Balance always equals the ledger sum, and balance_after runs in order. */
 async function assertLedgerConsistent(t: TestDb) {
   const rows = await t.sql`
-    select m.customer_id::text as c, m.points::text as p,
-           coalesce((select sum(points) from loyalty.ledger l where l.customer_id = m.customer_id), 0)::text as s
+    select m.member_id::text as c, m.points::text as p,
+           coalesce((select sum(points) from loyalty.ledger l where l.member_id = m.member_id), 0)::text as s
       from loyalty.members m`;
   for (const r of rows) assertEquals(r.p, r.s, `member ${r.c} balance vs ledger`);
   const chain = await t.sql`
-    select customer_id::text as c, balance_after::text as b,
-           (sum(points) over (partition by customer_id order by id))::text as running
+    select member_id::text as c, balance_after::text as b,
+           (sum(points) over (partition by member_id order by id))::text as running
       from loyalty.ledger`;
   for (const r of chain) assertEquals(r.b, r.running, `balance_after chain for ${r.c}`);
 }
@@ -61,7 +79,7 @@ dbTest('paid order earns floor(subtotal) points and creates the member', async (
   const r = await paid(t, 1001, 42, 12345);
   assertEquals(r, { outcome: 'awarded', points: 123, balance: 123, referral: null });
   const m = await member(t, 42);
-  assertEquals(m.customerId, '42');
+  assertEquals([m.memberId, m.email], [uid(42), mail(42)]);
   assertEquals(m.points, 123);
   assertEquals(m.tier, 'silver');
   assertEquals(m.totalSpentCents, 12345);
@@ -76,8 +94,8 @@ dbTest('paid order earns floor(subtotal) points and creates the member', async (
 dbTest('the same order is awarded once whatever the delivery', async (t) => {
   assertEquals((await paid(t, 2001, 7, 5000, 'wh-a')).outcome, 'awarded');
   assertEquals((await paid(t, 2001, 7, 5000, 'wh-a')).outcome, 'duplicate_delivery');
-  assertEquals((await paid(t, 2001, 7, 5000, 'wh-b')).outcome, 'already_awarded');
-  assertEquals((await paid(t, 2001, 7, 99999, null)).outcome, 'already_awarded');
+  assertEquals((await paid(t, 2001, 7, 5000, 'wh-b')).outcome, 'already_recorded');
+  assertEquals((await paid(t, 2001, 7, 99999, null)).outcome, 'already_recorded');
   assertEquals(await points(t, 7), 50);
   const [{ n }] = await t.sql`select count(*)::int as n from loyalty.webhook_events`;
   assertEquals(n, 2);
@@ -114,6 +132,54 @@ dbTest('SQL tiers match TIER_CONFIG in lib/types.ts', async (t) => {
   }
 });
 
+// ------------------------------------------------------------- identity
+
+dbTest('orders placed before sign-up wait for the member and are awarded on first sign-in', async (t) => {
+  const r = await t.db.recordPaidOrder({
+    webhookId: wh(), orderId: '501', email: '  C7@Example.COM ', customerId: '7012345678901', orderName: '#501', amountCents: 12000,
+  });
+  assertEquals(r, { outcome: 'stored_until_sign_up' });
+  await refund(t, 9001, 501, 2000); // a refund before sign-up too
+  const [{ n }] = await t.sql`select count(*)::int as n from loyalty.members`;
+  assertEquals(n, 0);
+  const m = await member(t, 7); // signs in as c7@example.com
+  assertEquals(m.points, 100);
+  assertEquals(m.totalSpentCents, 10000);
+  assertEquals(m.orders.map((o: { orderId: string; points: number; refundedCents: number }) => [o.orderId, o.points, o.refundedCents]), [['501', 100, 2000]]);
+  const [row] = await t.sql`select shopify_customer_id::text as s from loyalty.members`;
+  assertEquals(row.s, '7012345678901');
+  // A later order for the same email is awarded straight away.
+  assertEquals((await t.db.recordPaidOrder({ webhookId: wh(), orderId: '502', email: mail(7), customerId: null, orderName: '#502', amountCents: 500 })).outcome, 'awarded');
+  assertEquals(await points(t, 7), 105);
+  await assertLedgerConsistent(t);
+});
+
+dbTest('guest checkouts count by email; other emails never reach the member', async (t) => {
+  await signIn(t, 8);
+  await t.db.recordPaidOrder({ webhookId: wh(), orderId: '601', email: mail(8), customerId: null, orderName: '#601', amountCents: 3000 });
+  await t.db.recordPaidOrder({ webhookId: wh(), orderId: '602', email: 'someone.else@example.com', customerId: null, orderName: '#602', amountCents: 9000 });
+  assertEquals(await points(t, 8), 30);
+  const [o] = await t.sql`select member_id from loyalty.orders where order_id = 602`;
+  assertEquals(o.member_id, null);
+});
+
+dbTest('a known order or an earlier-customer email blocks referral claims', async (t) => {
+  const code = await codeOf(t, 1);
+  await t.db.recordPaidOrder({ webhookId: wh(), orderId: '701', email: mail(2), customerId: null, orderName: '#701', amountCents: 3000 });
+  assertEquals(await claim(t, 2, code), { outcome: 'not_new_customer' }); // waiting order with their email
+  await t.sql`insert into loyalty.prior_customers values (${mail(3)})`;
+  assertEquals(await claim(t, 3, code), { outcome: 'not_new_customer' });
+  assertEquals(await claim(t, 4, code), { outcome: 'pending' });
+});
+
+dbTest('a member who changes email keeps their orders and picks up the new email ones', async (t) => {
+  await paid(t, 801, 9, 2000);
+  await t.db.recordPaidOrder({ webhookId: wh(), orderId: '802', email: 'new9@example.com', customerId: null, orderName: '#802', amountCents: 1000 });
+  const m = (await t.db.getMember({ memberId: uid(9), email: 'NEW9@example.com' })) as Record<string, any>;
+  assertEquals([m.email, m.points], ['new9@example.com', 30]);
+  await assertRejects(() => t.db.getMember({ memberId: uid(10), email: 'new9@example.com' }), Error, 'another member');
+});
+
 // ------------------------------------------------------------------- refunds
 
 dbTest('partial refunds claw back exactly what the refunded part earned', async (t) => {
@@ -132,16 +198,16 @@ dbTest('partial refunds claw back exactly what the refunded part earned', async 
 });
 
 dbTest('a refund that arrives before the award is applied when the award lands', async (t) => {
-  assertEquals((await refund(t, 601, 88, 2000)).outcome, 'stored_until_order_awarded');
+  assertEquals((await refund(t, 601, 88, 2000)).outcome, 'stored_until_order_arrives');
   const r = await paid(t, 88, 3, 5000);
-  assertEquals(r.points, 50);
+  assertEquals(r.points, 30); // net: 50 earned, 20 for the refund we already knew of
   assertEquals(await points(t, 3), 30);
   assertEquals((await member(t, 3)).totalSpentCents, 3000);
   await assertLedgerConsistent(t);
 });
 
 dbTest('refunds for orders that never earned touch nobody', async (t) => {
-  assertEquals((await refund(t, 701, 999, 5000)).outcome, 'stored_until_order_awarded');
+  assertEquals((await refund(t, 701, 999, 5000)).outcome, 'stored_until_order_arrives');
   const [{ n }] = await t.sql`select count(*)::int as n from loyalty.members`;
   assertEquals(n, 0);
 });
@@ -154,18 +220,19 @@ async function codeOf(t: TestDb, c: number) {
 
 dbTest('referral codes are validated and single use', async (t) => {
   const alice = await codeOf(t, 100);
-  assertEquals(await t.db.claimReferral('200', 'NOPE', false), { outcome: 'invalid_code' });
-  assertEquals(await t.db.claimReferral('200', 'ABCDEFGH', false), { outcome: 'invalid_code' }); // well-formed, unknown
-  assertEquals(await t.db.claimReferral('100', alice, false), { outcome: 'self_referral' });
-  assertEquals(await t.db.claimReferral('200', alice, true), { outcome: 'not_new_customer' }); // Shopify says has orders
+  assertEquals(await claim(t, 200, 'NOPE'), { outcome: 'invalid_code' });
+  assertEquals(await claim(t, 200, 'ABCDEFGH'), { outcome: 'invalid_code' }); // well-formed, unknown
+  assertEquals(await claim(t, 100, alice), { outcome: 'self_referral' });
+  await t.sql`insert into loyalty.prior_customers values (${mail(500)})`;
+  assertEquals(await claim(t, 500, alice), { outcome: 'not_new_customer' }); // ordered before Health Points began
   await paid(t, 5, 300, 1000);
-  assertEquals(await t.db.claimReferral('300', alice, false), { outcome: 'not_new_customer' }); // we saw a paid order
-  assertEquals(await t.db.claimReferral('200', '  ' + alice.toLowerCase() + ' ', false), { outcome: 'pending' });
-  assertEquals(await t.db.claimReferral('200', alice, false), { outcome: 'already_claimed' });
+  assertEquals(await claim(t, 300, alice), { outcome: 'not_new_customer' }); // we saw a paid order
+  assertEquals(await claim(t, 200, '  ' + alice.toLowerCase() + ' '), { outcome: 'pending' });
+  assertEquals(await claim(t, 200, alice), { outcome: 'already_claimed' });
   const bob = await codeOf(t, 400);
-  assertEquals(await t.db.claimReferral('200', bob, false), { outcome: 'already_claimed' });
+  assertEquals(await claim(t, 200, bob), { outcome: 'already_claimed' });
   // 200 cannot refer 100 back... 100 referred 200, so 100 claiming 200's code is mutual.
-  assertEquals(await t.db.claimReferral('100', await codeOf(t, 200), false), { outcome: 'mutual_referral' });
+  assertEquals(await claim(t, 100, await codeOf(t, 200)), { outcome: 'mutual_referral' });
   assertEquals((await member(t, 200)).referredStatus, 'pending');
   assertEquals((await member(t, 100)).referralsPending, 1);
   assertEquals(await points(t, 100), 0); // nothing is paid for a claim
@@ -174,7 +241,7 @@ dbTest('referral codes are validated and single use', async (t) => {
 
 dbTest('both bonuses arrive with the first paid order, once', async (t) => {
   const code = await codeOf(t, 1);
-  await t.db.claimReferral('2', code, false);
+  await claim(t, 2, code);
   const r = await paid(t, 10, 2, 2500);
   assertEquals(r, { outcome: 'awarded', points: 25, balance: 125, referral: 'completed' });
   assertEquals(await points(t, 1), 100);
@@ -187,14 +254,14 @@ dbTest('both bonuses arrive with the first paid order, once', async (t) => {
 });
 
 dbTest('a free first order does not complete a referral', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await claim(t, 2, await codeOf(t, 1));
   assertEquals((await paid(t, 10, 2, 0)).referral, null);
   assertEquals((await member(t, 2)).referredStatus, 'pending');
   assertEquals((await paid(t, 11, 2, 100)).referral, 'completed');
 });
 
 dbTest('fully refunding the qualifying order reverses both bonuses', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await claim(t, 2, await codeOf(t, 1));
   await paid(t, 10, 2, 4000); // 40 + 100 welcome; referrer +100
   await refund(t, 900, 10, 1000); // partial: bonuses stay
   assertEquals((await member(t, 2)).referredStatus, 'completed');
@@ -207,7 +274,7 @@ dbTest('fully refunding the qualifying order reverses both bonuses', async (t) =
   await refund(t, 901, 10, 3000, 'replayed'); // replay changes nothing
   assertEquals(await points(t, 2), 0);
   // Still one claim per customer for life.
-  assertEquals(await t.db.claimReferral('2', await codeOf(t, 3), false), { outcome: 'already_claimed' });
+  assertEquals(await claim(t, 2, await codeOf(t, 3)), { outcome: 'already_claimed' });
   await assertLedgerConsistent(t);
 });
 
@@ -219,10 +286,7 @@ function permutations<T>(items: T[]): T[][] {
 }
 
 function paidAt(t: TestDb, order: number, customer: number, cents: number, processedAt: string) {
-  return t.db.recordPaidOrder({
-    webhookId: wh(), orderId: String(order), customerId: String(customer), orderName: '#' + order,
-    amountCents: cents, processedAt,
-  });
+  return paidWith(t, order, customer, cents, { processedAt });
 }
 
 dbTest('final balances do not depend on the order webhooks arrive in', async (t) => {
@@ -232,7 +296,7 @@ dbTest('final balances do not depend on the order webhooks arrive in', async (t)
   assertEquals(runs.length, 24);
   for (const [k, run] of runs.entries()) {
     const referrer = 10_000 + k * 10, referee = referrer + 1, base = 100_000 + k * 10;
-    await t.db.claimReferral(String(referee), await codeOf(t, referrer), false);
+    await claim(t, referee, await codeOf(t, referrer));
     for (const event of run) {
       if (event === 'A') await paidAt(t, base + 1, referee, 45000, '2026-10-01T10:00:00+08:00');
       if (event === 'B') await paidAt(t, base + 2, referee, 10000, '2026-10-02T10:00:00+08:00');
@@ -263,10 +327,7 @@ dbTest('several foreign-currency refunds on one order give the same balance in a
     const customer = 40_000 + k, base = 400_000 + k * 10;
     for (const event of run) {
       if (event === 'A') {
-        await t.db.recordPaidOrder({
-          webhookId: wh(), orderId: String(base + 1), customerId: String(customer), orderName: 'A', amountCents: 56667,
-          presentmentCents: 42500, presentmentCurrency: 'USD', taxesIncluded: true, processedAt: '2026-10-01T10:00:00+08:00',
-        });
+        await paidWith(t, base + 1, customer, 56667, { presentmentCents: 42500, presentmentCurrency: 'USD', taxesIncluded: true, processedAt: '2026-10-01T10:00:00+08:00' });
       }
       if (event === 'B') await paidAt(t, base + 2, customer, 10000, '2026-10-02T10:00:00+08:00');
       if (event === 'R1') await refundParts(t, base + 5, base + 1, { lineCents: 3334, txCents: 2500, txCurrency: 'USD' });
@@ -282,7 +343,7 @@ dbTest('the referral follows the order paid first, even when it arrives last', a
   // A (paid first) is refunded in full; B was paid later and kept. The referral rides on A, so it ends reversed.
   for (const [k, run] of permutations(['A', 'B', 'refundA']).entries()) {
     const referrer = 20_000 + k * 10, referee = referrer + 1, base = 200_000 + k * 10;
-    await t.db.claimReferral(String(referee), await codeOf(t, referrer), false);
+    await claim(t, referee, await codeOf(t, referrer));
     for (const event of run) {
       if (event === 'A') await paidAt(t, base + 1, referee, 5000, '2026-10-01T10:00:00+08:00');
       if (event === 'B') await paidAt(t, base + 2, referee, 3000, '2026-10-02T10:00:00+08:00');
@@ -332,7 +393,7 @@ dbTest('two customers claiming each other at once cannot both win', async (t) =>
   for (let i = 0; i < 10; i++) {
     const a = 10 + i * 2, b = 11 + i * 2;
     const [ca, cb] = [await codeOf(t, a), await codeOf(t, b)];
-    const out = await Promise.all([t.db.claimReferral(String(a), cb, false), t.db.claimReferral(String(b), ca, false)]);
+    const out = await Promise.all([claim(t, a, cb), claim(t, b, ca)]);
     assertEquals(out.filter((o) => o.outcome === 'pending').length, 1, JSON.stringify(out));
   }
 });
@@ -341,14 +402,43 @@ dbTest('a claim racing the first payment never leaves a stranded referral', asyn
   for (let i = 0; i < 12; i++) {
     const referee = 500 + i;
     const code = await codeOf(t, 1);
-    await Promise.all([t.db.claimReferral(String(referee), code, false), paidRetrying(t, 9000 + i, referee, 2000)]);
+    await Promise.all([claim(t, referee, code), paidRetrying(t, 9000 + i, referee, 2000)]);
   }
   const [{ stranded }] = await t.sql`
     select count(*)::int as stranded from loyalty.referrals r
-     where r.status = 'pending' and exists (select 1 from loyalty.orders o where o.customer_id = r.referee_id and o.amount_cents > 0)`;
+     where r.status = 'pending' and exists (select 1 from loyalty.orders o where o.member_id = r.referee_id and o.amount_cents > 0)`;
   assertEquals(stranded, 0);
   await assertLedgerConsistent(t);
 });
+
+dbTest('many orders and refunds for one customer at once end like the same history one by one', async (t) => {
+  // 20 orders crossing both tier lines plus 10 refunds, all fired together for customer 70,
+  // then the same events one at a time for customer 71. Balances must match exactly.
+  const events = (customer: number, base: number) => [
+    ...Array.from({ length: 20 }, (_, i) => () =>
+      paidWith(t, base + i, customer, 15000 + i * 777, { processedAt: `2026-10-${String(1 + i).padStart(2, '0')}T10:00:00+08:00` })),
+    ...Array.from({ length: 10 }, (_, i) => () => refund(t, base + 500 + i, base + i * 2, 3000 + i * 101)),
+  ];
+  await signIn(t, 70);
+  await signIn(t, 71);
+  await Promise.all(events(70, 70_000).map((run) => retrying(run)));
+  for (const run of events(71, 71_000)) await run();
+  const [a, b] = [await member(t, 70), await member(t, 71)];
+  assertEquals([a.points, a.totalSpentCents, a.tier], [b.points, b.totalSpentCents, b.tier]);
+  await assertLedgerConsistent(t);
+});
+
+/** What Shopify does with a 5xx: deliver again. */
+async function retrying<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      if (attempt < 8 && /referral changed while locking|deadlock|could not serialize/.test(String(err))) continue;
+      throw err;
+    }
+  }
+}
 
 dbTest('concurrent first visits create one member with one code', async (t) => {
   const ms = await Promise.all(Array.from({ length: 20 }, () => member(t, 77)));
@@ -358,7 +448,7 @@ dbTest('concurrent first visits create one member with one code', async (t) => {
 // ------------------------------------------------- refund amounts (review)
 
 dbTest('a first order refunded in full before its payment arrives earns no referral bonus', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await claim(t, 2, await codeOf(t, 1));
   await refund(t, 900, 10, 4000); // refund webhook overtakes orders/paid
   const r = await paid(t, 10, 2, 4000);
   assertEquals(r.referral, 'reversed');
@@ -379,7 +469,7 @@ dbTest('amount-only refunds count, minus shipping, shipping tax and duties', asy
 });
 
 dbTest('extra money returned on top of refunded items is clawed back too', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await claim(t, 2, await codeOf(t, 1));
   await paid(t, 10, 2, 10000);
   // S$20 of items plus an S$80 goodwill adjustment: the whole order was refunded.
   await refundParts(t, 1, 10, { lineCents: 2000, txCents: 10000 });
@@ -388,21 +478,15 @@ dbTest('extra money returned on top of refunded items is clawed back too', async
 });
 
 dbTest('refunds paid in the customer currency convert at the order rate', async (t) => {
-  await t.db.recordPaidOrder({
-    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 13500,
-    presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
-  }); // S$135 = US$100 -> 135 points
+  await paidWith(t, 10, 2, 13500, { presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true }); // S$135 = US$100 -> 135 points
   assertEquals((await refundParts(t, 1, 10, { txCents: 4000, txCurrency: 'USD' })).clawed_back, 54); // US$40 = S$54
   // A currency we cannot convert falls back to the refunded items' subtotal (none here).
   assertEquals((await refundParts(t, 2, 10, { txCents: 4000, txCurrency: 'EUR' })).clawed_back, 0);
 });
 
 dbTest('refunding a foreign-currency order in parts still adds up to a full refund', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
-  await t.db.recordPaidOrder({
-    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000,
-    presentmentCents: 7500, presentmentCurrency: 'USD', taxesIncluded: true,
-  }); // S$100 paid as US$75
+  await claim(t, 2, await codeOf(t, 1));
+  await paidWith(t, 10, 2, 10000, { presentmentCents: 7500, presentmentCurrency: 'USD', taxesIncluded: true }); // S$100 paid as US$75
   for (const id of [1, 2, 3]) await refundParts(t, id, 10, { txCents: 2500, txCurrency: 'USD' });
   const [o] = await t.sql`select refunded_cents::int as r, refunded_presentment_cents::int as p from loyalty.orders`;
   assertEquals(o, { r: 10000, p: 7500 }); // per-part rounding would leave 9999
@@ -412,11 +496,8 @@ dbTest('refunding a foreign-currency order in parts still adds up to a full refu
 });
 
 dbTest('a shipping refund between foreign-currency part refunds cannot keep the bonuses', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
-  await t.db.recordPaidOrder({
-    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 13500,
-    presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
-  }); // S$135 of goods paid as US$100
+  await claim(t, 2, await codeOf(t, 1));
+  await paidWith(t, 10, 2, 13500, { presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true }); // S$135 of goods paid as US$100
   await refundParts(t, 1, 10, { txCents: 3335, txCurrency: 'USD' });
   await refundParts(t, 2, 10, { txCents: 741, txCurrency: 'USD', otherCents: 1001 }); // shipping only
   await refundParts(t, 3, 10, { txCents: 6665, txCurrency: 'USD' });
@@ -431,10 +512,7 @@ dbTest('a shipping refund in between never changes what the goods refunds add up
   async function keptAfter(withShipping: boolean, presentmentGiven: boolean) {
     const order = withShipping ? (presentmentGiven ? 21 : 22) : 20;
     const customer = 100 + order;
-    await t.db.recordPaidOrder({
-      webhookId: wh(), orderId: String(order), customerId: String(customer), orderName: '#' + order, amountCents: 13400,
-      presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true,
-    });
+    await paidWith(t, order, customer, 13400, { presentmentCents: 10000, presentmentCurrency: 'USD', taxesIncluded: true });
     await refundParts(t, order * 10 + 1, order, { txCents: 2500, txCurrency: 'USD' });
     if (withShipping) {
       await refundParts(t, order * 10 + 2, order, {
@@ -452,7 +530,7 @@ dbTest('a shipping refund in between never changes what the goods refunds add up
 });
 
 dbTest('referrals need a first order of at least S$1 that keeps at least S$1', async (t) => {
-  await t.db.claimReferral('2', await codeOf(t, 1), false);
+  await claim(t, 2, await codeOf(t, 1));
   assertEquals((await paid(t, 10, 2, 99)).referral, null);
   assertEquals((await paid(t, 11, 2, 500)).referral, 'completed');
   await refund(t, 1, 11, 400); // S$1.00 kept: bonuses stay
@@ -463,9 +541,7 @@ dbTest('referrals need a first order of at least S$1 that keeps at least S$1', a
 });
 
 dbTest('tax-exclusive orders do not count item tax as merchandise', async (t) => {
-  await t.db.recordPaidOrder({
-    webhookId: wh(), orderId: '10', customerId: '2', orderName: '#10', amountCents: 10000, taxesIncluded: false,
-  });
+  await paidWith(t, 10, 2, 10000, { taxesIncluded: false });
   // Items S$50 + S$4.50 tax returned as one S$54.50 transaction.
   assertEquals((await refundParts(t, 1, 10, { lineCents: 5000, lineTaxCents: 450, txCents: 5450 })).clawed_back, 50);
 });
@@ -474,12 +550,12 @@ dbTest('a full refund racing repeated claims never deadlocks', async (t) => {
   for (let i = 0; i < 10; i++) {
     const referrer = 1000 + i * 2, referee = 1001 + i * 2;
     const code = await codeOf(t, referrer);
-    await t.db.claimReferral(String(referee), code, false);
+    await claim(t, referee, code);
     await paid(t, 7000 + i, referee, 3000);
     const out = await Promise.all([
       refund(t, 7500 + i, 7000 + i, 3000),
-      t.db.claimReferral(String(referee), code, false),
-      t.db.claimReferral(String(referee), code, false),
+      claim(t, referee, code),
+      claim(t, referee, code),
     ]);
     assertEquals(out[0].outcome, 'applied');
     assertEquals((await member(t, referee)).referredStatus, 'reversed');
@@ -494,13 +570,14 @@ dbTest('API roles cannot read or call anything in the loyalty schema', async (t)
   for (const role of ['anon', 'authenticated', 'service_role'] as const) {
     const conn = await t.as(role);
     await assertRejects(() => conn`select * from loyalty.members`, Error, 'permission denied');
-    await assertRejects(() => conn`select loyalty.get_member(1)`, Error, 'permission denied');
-    await assertRejects(() => conn`select loyalty.record_paid_order('x', 2, 1, 'x', 100000)`, Error, 'permission denied');
+    await assertRejects(() => conn`select loyalty.get_member(${uid(1)}::uuid, ${mail(1)})`, Error, 'permission denied');
+    await assertRejects(() => conn`select loyalty.record_paid_order('x', 2, ${mail(1)}, null, 'x', 100000)`, Error, 'permission denied');
   }
 });
 
 dbTest('referral codes are well formed and unique across many members', async (t) => {
-  await t.sql`select loyalty.ensure_member(g) from generate_series(1, 3000) g`;
+  await t.sql`select loyalty.ensure_member(('00000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid, 'u' || g || '@example.com')
+                from generate_series(1, 3000) g`;
   const [r] = await t.sql`
     select count(*)::int as n, count(distinct referral_code)::int as d,
            bool_and(referral_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$') as ok

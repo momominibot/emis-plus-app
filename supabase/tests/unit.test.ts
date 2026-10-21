@@ -2,10 +2,10 @@
 // Run: supabase/tests/run.sh   (or: cd supabase && deno test --config deno.json tests/unit.test.ts)
 
 import { assert, assertEquals, assertThrows } from 'jsr:@std/assert@1.0.13';
-import { idFrom, moneyToCents, parseJsonLossless, parsePaidOrder, parseRefund } from '../functions/_shared/parse.ts';
+import { idFrom, moneyToCents, normalizeEmail, parseJsonLossless, parsePaidOrder, parseRefund } from '../functions/_shared/parse.ts';
 import { handleShopifyWebhook, verifyShopifyHmac } from '../functions/_shared/webhook.ts';
-import { handleLoyaltyRequest } from '../functions/_shared/api.ts';
-import type { LoyaltyDb, PaidOrderInput, RefundInput } from '../functions/_shared/types.ts';
+import { handleLoyaltyRequest, type AuthUser } from '../functions/_shared/api.ts';
+import type { LoyaltyDb, Member, PaidOrderInput, RefundInput } from '../functions/_shared/types.ts';
 
 const SHOP = '4a6920-67.myshopify.com';
 
@@ -16,13 +16,13 @@ async function sign(body: string, secret: string): Promise<string> {
 }
 
 function fakeDb(overrides: Partial<LoyaltyDb> = {}) {
-  const calls: { paid: PaidOrderInput[]; refunds: RefundInput[]; claims: unknown[][]; members: string[] } = {
+  const calls: { paid: PaidOrderInput[]; refunds: RefundInput[]; claims: unknown[][]; members: Member[] } = {
     paid: [], refunds: [], claims: [], members: [],
   };
   const db: LoyaltyDb = {
     recordPaidOrder: async (o) => (calls.paid.push(o), { outcome: 'awarded' }),
     recordRefund: async (r) => (calls.refunds.push(r), { outcome: 'applied' }),
-    getMember: async (id) => (calls.members.push(id), { customerId: id, points: 7 }),
+    getMember: async (m) => (calls.members.push(m), { memberId: m.memberId, points: 7 }),
     claimReferral: async (...args) => (calls.claims.push(args), { outcome: 'pending' }),
     ...overrides,
   };
@@ -38,7 +38,8 @@ function paidPayload(extra: Record<string, unknown> = {}) {
     processed_at: '2026-10-01T11:00:00+08:00',
     financial_status: 'paid',
     subtotal_price_set: { shop_money: { amount: '123.45', currency_code: 'SGD' }, presentment_money: { amount: '123.45', currency_code: 'SGD' } },
-    customer: { id: 7012345678901, admin_graphql_api_id: 'gid://shopify/Customer/7012345678901', email: 'x@example.com' },
+    email: 'contact@example.com',
+    customer: { id: 7012345678901, admin_graphql_api_id: 'gid://shopify/Customer/7012345678901', email: ' X@Example.com ' },
     ...extra,
   };
 }
@@ -79,10 +80,15 @@ Deno.test('parseJsonLossless keeps ids beyond MAX_SAFE_INTEGER exact', () => {
   assert(String(JSON.parse('{"id":820982911946154508}').id) !== '820982911946154508');
 });
 
-Deno.test('parsePaidOrder awards only paid, SGD, non-test, customer orders', () => {
+Deno.test('normalizeEmail lowercases, trims and rejects non-addresses', () => {
+  assertEquals(normalizeEmail('  Pat@Example.COM '), 'pat@example.com');
+  for (const bad of ['', 'pat', 'pat@', '@x.com', 'a b@x.com', null, 42]) assertEquals(normalizeEmail(bad), null);
+});
+
+Deno.test('parsePaidOrder awards only paid, SGD, non-test orders with an email', () => {
   const opts = { currency: 'SGD', allowTestOrders: false };
   assertEquals(parsePaidOrder(paidPayload(), opts), {
-    ok: true, orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
+    ok: true, orderId: '6252199051413', email: 'x@example.com', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
     presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true, processedAt: '2026-10-01T11:00:00+08:00',
   });
   const usd = parsePaidOrder(paidPayload({
@@ -92,7 +98,10 @@ Deno.test('parsePaidOrder awards only paid, SGD, non-test, customer orders', () 
   assertEquals(usd.ok && [usd.amountCents, usd.presentmentCents, usd.presentmentCurrency, usd.taxesIncluded], [13500, 10000, 'USD', false]);
   assertEquals(parsePaidOrder(paidPayload({ test: true }), opts), { ok: false, reason: 'ignored_test_order' });
   assertEquals(parsePaidOrder(paidPayload({ test: true }), { ...opts, allowTestOrders: true }).ok, true);
-  assertEquals(parsePaidOrder(paidPayload({ customer: null }), opts), { ok: false, reason: 'ignored_guest_checkout' });
+  // Guest checkout: no customer, the order's contact email is used.
+  const guest = parsePaidOrder(paidPayload({ customer: null }), opts);
+  assertEquals(guest.ok && [guest.email, guest.customerId], ['contact@example.com', null]);
+  assertEquals(parsePaidOrder(paidPayload({ customer: null, email: null, contact_email: 'not an email' }), opts), { ok: false, reason: 'ignored_no_email' });
   for (const status of ['pending', 'authorized', 'partially_paid', 'voided', 'expired', undefined]) {
     assertEquals(parsePaidOrder(paidPayload({ financial_status: status }), opts), { ok: false, reason: 'ignored_not_paid' });
   }
@@ -211,7 +220,7 @@ Deno.test('webhook: signed orders/paid is passed to the database', async () => {
   }), { secret: 's3cret', shopDomain: SHOP, currency: 'SGD', allowTestOrders: false, db });
   assertEquals(res.status, 200);
   assertEquals(calls.paid, [{
-    webhookId: 'wh-1', orderId: '6252199051413', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
+    webhookId: 'wh-1', orderId: '6252199051413', email: 'x@example.com', customerId: '7012345678901', orderName: '#1042', amountCents: 12345,
     presentmentCents: 12345, presentmentCurrency: 'SGD', taxesIncluded: true, processedAt: '2026-10-01T11:00:00+08:00',
   }]);
 });
@@ -249,89 +258,93 @@ Deno.test('webhook: unknown topics are acknowledged; database failures ask Shopi
 
 // ---------------------------------------------------------------- loyalty API
 
-type FakeShopify = (token: string, query: string, headers: Headers) => Response;
+const USER_A = '6f9619ff-8b86-d011-b42d-00c04fc964ff';
+const USERS: Record<string, AuthUser> = {
+  'token-a': { id: USER_A, email: 'Pat@Example.com', emailConfirmed: true },
+  'token-unconfirmed': { id: '11111111-1111-4111-8111-111111111111', email: 'new@example.com', emailConfirmed: false },
+  'token-no-email': { id: '22222222-2222-4222-8222-222222222222', email: null, emailConfirmed: true },
+  'token-bad-id': { id: 'not-a-uuid', email: 'x@example.com', emailConfirmed: true },
+};
 
-function shopifyFetch(handler: FakeShopify): typeof fetch {
-  return (async (_url: string | URL | Request, init?: RequestInit) => {
-    const headers = new Headers(init?.headers);
-    const { query } = JSON.parse(String(init?.body));
-    return handler(headers.get('authorization') || '', query, headers);
-  }) as typeof fetch;
+function apiCfg(db: LoyaltyDb, getUser: (token: string) => Promise<AuthUser | null> = async (t) => USERS[t] ?? null) {
+  const seen: string[] = [];
+  return {
+    seen,
+    cfg: {
+      db,
+      allowedOrigins: ['https://momominibot.github.io'],
+      getUser: (token: string) => (seen.push(token), getUser(token)),
+    },
+  };
 }
 
-const customerResponse = (id: string, orders?: unknown[]) =>
-  Response.json({ data: { customer: { id: 'gid://shopify/Customer/' + id, ...(orders ? { orders: { nodes: orders } } : {}) } } });
-
-function apiCfg(db: LoyaltyDb, handler: FakeShopify) {
-  return { db, customerApiUrl: 'https://shopify.com/1/account/customer/api/2026-10/graphql', allowedOrigins: ['https://momominibot.github.io'], fetch: shopifyFetch(handler) };
-}
-
-Deno.test('api: GET /me resolves the customer through Shopify, never from the client', async () => {
-  const { db, calls } = fakeDb();
-  const seen: { token: string; origin: string | null }[] = [];
-  const cfg = apiCfg(db, (token, _q, headers) => {
-    seen.push({ token, origin: headers.get('origin') });
-    return token === 'good-token' ? customerResponse('7012345678901') : new Response('{}', { status: 401 });
+const get = (token?: string, origin?: string) =>
+  new Request('https://ref.supabase.co/functions/v1/loyalty/me?memberId=someone-else', {
+    headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(origin ? { Origin: origin } : {}) },
   });
-  const res = await handleLoyaltyRequest(new Request('https://x/functions/v1/loyalty/me?customerId=999', {
-    headers: { Authorization: 'Bearer good-token', Origin: 'https://momominibot.github.io' },
-  }), cfg);
+
+Deno.test('api: GET /me uses the user Supabase Auth returns, never ids from the client', async () => {
+  const { db, calls } = fakeDb();
+  const { cfg, seen } = apiCfg(db);
+  const res = await handleLoyaltyRequest(get('token-a', 'https://momominibot.github.io'), cfg);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get('access-control-allow-origin'), 'https://momominibot.github.io');
-  assertEquals(calls.members, ['7012345678901']);
-  assertEquals(seen, [{ token: 'good-token', origin: 'https://momominibot.github.io' }]);
-
-  const bad = await handleLoyaltyRequest(new Request('https://x/loyalty/me', { headers: { Authorization: 'Bearer stolen' } }), cfg);
-  assertEquals(bad.status, 401);
-  const none = await handleLoyaltyRequest(new Request('https://x/loyalty/me'), cfg);
-  assertEquals(none.status, 401);
+  assertEquals(calls.members, [{ memberId: USER_A, email: 'pat@example.com' }]);
+  assertEquals(seen, ['token-a']);
+  assertEquals((await handleLoyaltyRequest(get('stolen'), cfg)).status, 401);
+  assertEquals((await handleLoyaltyRequest(get(), cfg)).status, 401);
+  assertEquals((await handleLoyaltyRequest(get('token-bad-id'), cfg)).status, 401);
   assertEquals(calls.members.length, 1);
 });
 
-Deno.test('api: referral claims pass Shopify order history to the database', async () => {
+Deno.test('api: only confirmed emails reach the ledger', async () => {
   const { db, calls } = fakeDb();
-  const cfg = apiCfg(db, (token) =>
-    token === 'new' ? customerResponse('11', []) : customerResponse('22', [{ id: 'gid://shopify/Order/5' }]));
-  const post = (token: string, body: string) =>
+  const { cfg } = apiCfg(db);
+  const res = await handleLoyaltyRequest(get('token-unconfirmed'), cfg);
+  assertEquals([res.status, (await res.json()).error], [403, 'email_not_confirmed']);
+  assertEquals((await handleLoyaltyRequest(get('token-no-email'), cfg)).status, 403);
+  assertEquals(calls.members.length, 0);
+});
+
+Deno.test('api: referral claims go to the database as the signed-in member', async () => {
+  const { db, calls } = fakeDb();
+  const { cfg } = apiCfg(db);
+  const post = (body: string, token = 'token-a') =>
     handleLoyaltyRequest(new Request('https://x/loyalty/referral', { method: 'POST', body, headers: { Authorization: 'Bearer ' + token } }), cfg);
-  assertEquals((await post('new', '{"code":"abcd2345"}')).status, 200);
-  assertEquals((await post('old', '{"code":"ABCD2345"}')).status, 200);
-  assertEquals(calls.claims, [['11', 'abcd2345', false], ['22', 'ABCD2345', true]]);
-  assertEquals((await post('new', '{}')).status, 400);
-  assertEquals((await post('new', 'not json')).status, 400);
-  assertEquals((await post('new', JSON.stringify({ code: 'x'.repeat(2000) }))).status, 413);
+  assertEquals((await post('{"code":"abcd2345"}')).status, 200);
+  assertEquals(calls.claims, [[{ memberId: USER_A, email: 'pat@example.com' }, 'abcd2345']]);
+  assertEquals((await post('{}')).status, 400);
+  assertEquals((await post('not json')).status, 400);
+  assertEquals((await post(JSON.stringify({ code: 'x'.repeat(2000) }))).status, 413);
+  assertEquals((await post('{"code":"ABCD2345"}', 'token-unconfirmed')).status, 403);
+  assertEquals(calls.claims.length, 1);
 });
 
 Deno.test('api: rejection outcomes return 422', async () => {
   const { db } = fakeDb({ claimReferral: async () => ({ outcome: 'self_referral' }) });
-  const cfg = apiCfg(db, () => customerResponse('11', []));
-  const res = await handleLoyaltyRequest(new Request('https://x/loyalty/referral', { method: 'POST', body: '{"code":"ABCD2345"}', headers: { Authorization: 'Bearer t' } }), cfg);
+  const { cfg } = apiCfg(db);
+  const res = await handleLoyaltyRequest(new Request('https://x/loyalty/referral', { method: 'POST', body: '{"code":"ABCD2345"}', headers: { Authorization: 'Bearer token-a' } }), cfg);
   assertEquals(res.status, 422);
   assertEquals(await res.json(), { outcome: 'self_referral' });
 });
 
-Deno.test('api: Shopify outages and auth errors are told apart', async () => {
-  const { db } = fakeDb();
-  const req = () => new Request('https://x/loyalty/me', { headers: { Authorization: 'Bearer t' } });
-  assertEquals((await handleLoyaltyRequest(req(), apiCfg(db, () => new Response('oops', { status: 503 })))).status, 502);
-  assertEquals((await handleLoyaltyRequest(req(), apiCfg(db, () => Response.json({ errors: [{ message: 'x', extensions: { code: 'UNAUTHENTICATED' } }] })))).status, 401);
-  assertEquals((await handleLoyaltyRequest(req(), apiCfg(db, () => Response.json({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] })))).status, 502);
-  assertEquals((await handleLoyaltyRequest(req(), apiCfg(db, () => Response.json({ data: { customer: null } })))).status, 401);
-  assertEquals((await handleLoyaltyRequest(req(), apiCfg(db, () => Response.json({ data: { customer: { id: 'gid://shopify/Order/1' } } })))).status, 502);
-  const throwing = { ...apiCfg(db, () => customerResponse('1')), fetch: (() => Promise.reject(new TypeError('dns'))) as typeof fetch };
-  assertEquals((await handleLoyaltyRequest(req(), throwing)).status, 502);
+Deno.test('api: an Auth outage is a 502, a database failure a 500', async () => {
+  const down = apiCfg(fakeDb().db, () => Promise.reject(new Error('auth 503')));
+  assertEquals((await handleLoyaltyRequest(get('token-a'), down.cfg)).status, 502);
+  const broken = apiCfg(fakeDb({ getMember: () => Promise.reject(new Error('db down')) }).db);
+  assertEquals((await handleLoyaltyRequest(get('token-a'), broken.cfg)).status, 500);
 });
 
 Deno.test('api: CORS allowlist, preflight, routing', async () => {
   const { db, calls } = fakeDb();
-  const cfg = apiCfg(db, () => customerResponse('1'));
-  const evil = await handleLoyaltyRequest(new Request('https://x/loyalty/me', { headers: { Authorization: 'Bearer t', Origin: 'https://evil.example' } }), cfg);
+  const { cfg } = apiCfg(db);
+  const evil = await handleLoyaltyRequest(get('token-a', 'https://evil.example'), cfg);
   assertEquals(evil.status, 403);
   assertEquals(evil.headers.get('access-control-allow-origin'), null);
   const pre = await handleLoyaltyRequest(new Request('https://x/loyalty/me', { method: 'OPTIONS', headers: { Origin: 'https://momominibot.github.io' } }), cfg);
   assertEquals(pre.status, 204);
-  assertEquals(pre.headers.get('access-control-allow-headers'), 'authorization, content-type');
-  assertEquals((await handleLoyaltyRequest(new Request('https://x/loyalty/admin', { headers: { Authorization: 'Bearer t' } }), cfg)).status, 404);
-  assertEquals((await handleLoyaltyRequest(new Request('https://x/loyalty/me', { method: 'POST', headers: { Authorization: 'Bearer t' } }), cfg)).status, 405);
+  assertEquals(pre.headers.get('access-control-allow-headers'), 'authorization, content-type, apikey, x-client-info');
+  assertEquals((await handleLoyaltyRequest(new Request('https://x/loyalty/admin', { headers: { Authorization: 'Bearer token-a' } }), cfg)).status, 404);
+  assertEquals((await handleLoyaltyRequest(new Request('https://x/loyalty/me', { method: 'POST', headers: { Authorization: 'Bearer token-a' } }), cfg)).status, 405);
   assertEquals(calls.members.length, 0);
 });

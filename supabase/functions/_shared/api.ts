@@ -1,85 +1,37 @@
 // Health Points API for the EMIS+ app.
 //
-// The app sends the customer's own Customer Account API access token. We
-// never trust a customer ID from the client: Shopify resolves the token to a
-// customer, and that ID keys every read and write. No Admin token is used.
+// The app sends the user's Supabase Auth access token. We never trust an id
+// or email from the client: Supabase Auth resolves the token to the user,
+// and only a confirmed email is used to match Shopify orders.
 //
-//   GET  /loyalty/me        -> membership, balance, history, referral code
+//   GET  /loyalty/me        -> membership, balance, history, orders, referral code
 //   POST /loyalty/referral  -> { code } claim a friend's code (new customers only)
 
-import { idFrom } from './parse.ts';
-import type { LoyaltyDb } from './types.ts';
+import { normalizeEmail } from './parse.ts';
+import type { LoyaltyDb, Member } from './types.ts';
+
+export interface AuthUser {
+  id: string;
+  email: string | null;
+  emailConfirmed: boolean;
+}
 
 export interface ApiConfig {
   db: LoyaltyDb;
-  /** Customer Account GraphQL endpoint from /.well-known/customer-account-api. */
-  customerApiUrl: string;
+  /** The user behind a Supabase access token; null if the token is not valid. Throws if Auth is unreachable. */
+  getUser: (accessToken: string) => Promise<AuthUser | null>;
   /** Browser origins allowed to call the API (native apps send no Origin). */
   allowedOrigins: string[];
-  fetch?: typeof fetch;
   log?: (event: Record<string, unknown>) => void;
 }
 
-type Customer = { customerId: string; hasOrders: boolean | null };
-
-class UpstreamError extends Error {}
-
-const CUSTOMER_QUERY = 'query LoyaltyCustomer { customer { id } }';
-const CUSTOMER_WITH_ORDERS_QUERY = 'query LoyaltyCustomerOrders { customer { id orders(first: 1) { nodes { id } } } }';
-
-/** Asks Shopify who owns the token. null means the token is not valid. */
-export async function resolveCustomer(
-  token: string,
-  cfg: ApiConfig,
-  opts: { withOrders: boolean; origin: string | null },
-): Promise<Customer | null> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: token,
-    'User-Agent': 'EMIS+ loyalty service',
-  };
-  // Tokens issued to the web client are bound to its JavaScript origin.
-  if (opts.origin) headers.Origin = opts.origin;
-  let res: Response;
-  try {
-    res = await (cfg.fetch ?? fetch)(cfg.customerApiUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ query: opts.withOrders ? CUSTOMER_WITH_ORDERS_QUERY : CUSTOMER_QUERY }),
-    });
-  } catch (err) {
-    throw new UpstreamError(err instanceof Error ? err.message : 'network error');
-  }
-  if (res.status === 401 || res.status === 403) return null;
-  if (!res.ok) throw new UpstreamError('Customer Account API HTTP ' + res.status);
-  let body: { data?: { customer?: { id?: unknown; orders?: { nodes?: unknown[] } } | null }; errors?: { extensions?: { code?: string } }[] };
-  try {
-    body = await res.json();
-  } catch {
-    throw new UpstreamError('Customer Account API returned invalid JSON');
-  }
-  if (body.errors?.length) {
-    const codes = body.errors.map((e) => e.extensions?.code);
-    if (codes.some((c) => c === 'UNAUTHENTICATED' || c === 'ACCESS_DENIED' || c === 'FORBIDDEN')) return null;
-    throw new UpstreamError('Customer Account API error ' + codes.join(','));
-  }
-  const customer = body.data?.customer;
-  if (!customer) return null;
-  let customerId: string;
-  try {
-    customerId = idFrom(customer.id, 'Customer');
-  } catch {
-    throw new UpstreamError('Customer Account API returned an unexpected customer id');
-  }
-  const nodes = customer.orders?.nodes;
-  return { customerId, hasOrders: opts.withOrders ? !Array.isArray(nodes) || nodes.length > 0 : null };
-}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function corsHeaders(origin: string | null, cfg: ApiConfig): Record<string, string> {
   if (!origin || !cfg.allowedOrigins.includes(origin)) return {};
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Headers': 'authorization, content-type',
+    'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Max-Age': '600',
     Vary: 'Origin',
@@ -106,7 +58,7 @@ export async function handleLoyaltyRequest(req: Request, cfg: ApiConfig): Promis
 
   const auth = req.headers.get('authorization') || '';
   const token = auth.replace(/^Bearer\s+/i, '').trim();
-  if (!token || token.length > 4096 || /\s/.test(token)) return reply(401, { error: 'sign_in_required' });
+  if (!token || token.length > 8192 || /\s/.test(token)) return reply(401, { error: 'sign_in_required' });
 
   let code = '';
   if (route === 'referral') {
@@ -122,17 +74,25 @@ export async function handleLoyaltyRequest(req: Request, cfg: ApiConfig): Promis
   }
 
   try {
-    const customer = await resolveCustomer(token, cfg, { withOrders: route === 'referral', origin });
-    if (!customer) return reply(401, { error: 'sign_in_required' });
+    let user: AuthUser | null;
+    try {
+      user = await cfg.getUser(token);
+    } catch (err) {
+      cfg.log?.({ level: 'error', route, upstream: 'auth', error: err instanceof Error ? err.message : String(err) });
+      return reply(502, { error: 'auth_unavailable' });
+    }
+    if (!user || !UUID.test(user.id)) return reply(401, { error: 'sign_in_required' });
+    const email = normalizeEmail(user.email);
+    if (!email || !user.emailConfirmed) return reply(403, { error: 'email_not_confirmed' });
+    const member: Member = { memberId: user.id.toLowerCase(), email };
 
     if (route === 'me') {
-      return reply(200, { member: await cfg.db.getMember(customer.customerId) });
+      return reply(200, { member: await cfg.db.getMember(member) });
     }
-    const result = await cfg.db.claimReferral(customer.customerId, code, customer.hasOrders === true);
+    const result = await cfg.db.claimReferral(member, code);
     return reply(result.outcome === 'pending' ? 200 : 422, { outcome: result.outcome });
   } catch (err) {
-    const upstream = err instanceof UpstreamError;
-    cfg.log?.({ level: 'error', route, upstream, error: err instanceof Error ? err.message : String(err) });
-    return reply(upstream ? 502 : 500, { error: upstream ? 'shopify_unavailable' : 'server_error' });
+    cfg.log?.({ level: 'error', route, error: err instanceof Error ? err.message : String(err) });
+    return reply(500, { error: 'server_error' });
   }
 }

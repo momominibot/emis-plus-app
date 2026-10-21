@@ -1,11 +1,13 @@
 // Edge function: Health Points API for the EMIS+ app.
-// Deploy with verify_jwt = false: callers present a Shopify Customer Account
-// API token, which the handler checks with Shopify on every request.
+// Deploy with verify_jwt = false: the handler checks every caller's Supabase
+// access token with Supabase Auth itself (getUser), which also tells it
+// whether the user's email is confirmed.
 //
-// Secrets: LOYALTY_ALLOWED_ORIGINS (comma separated), CUSTOMER_ACCOUNT_API_URL.
-// SUPABASE_DB_URL is provided by Supabase.
+// Secrets: LOYALTY_ALLOWED_ORIGINS (comma separated). SUPABASE_URL,
+// SUPABASE_DB_URL and the API keys are provided by Supabase.
 
-import { handleLoyaltyRequest } from '../_shared/api.ts';
+import { createClient } from 'npm:@supabase/supabase-js@2.117.2';
+import { handleLoyaltyRequest, type AuthUser } from '../_shared/api.ts';
 import { createLoyaltyDb } from '../_shared/db.ts';
 
 const db = createLoyaltyDb(Deno.env.get('SUPABASE_DB_URL') ?? '');
@@ -14,11 +16,36 @@ const allowedOrigins = (Deno.env.get('LOYALTY_ALLOWED_ORIGINS') ?? 'https://momo
   .map((o) => o.trim())
   .filter(Boolean);
 
+function publishableKey(): string {
+  try {
+    const keys = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}');
+    if (typeof keys.default === 'string') return keys.default;
+  } catch {
+    // fall back to the legacy key
+  }
+  return Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+}
+
+const auth = createClient(Deno.env.get('SUPABASE_URL') ?? '', publishableKey(), {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+}).auth;
+
+async function getUser(token: string): Promise<AuthUser | null> {
+  const { data, error } = await auth.getUser(token);
+  if (error) {
+    // 401/403: the token is not valid. Anything else: Auth is having trouble.
+    if (error.status === 401 || error.status === 403) return null;
+    throw error;
+  }
+  const user = data.user;
+  if (!user) return null;
+  return { id: user.id, email: user.email ?? null, emailConfirmed: Boolean(user.email_confirmed_at) };
+}
+
 Deno.serve((req) =>
   handleLoyaltyRequest(req, {
     db,
-    customerApiUrl: Deno.env.get('CUSTOMER_ACCOUNT_API_URL') ??
-      'https://shopify.com/61337632846/account/customer/api/2026-10/graphql',
+    getUser,
     allowedOrigins,
     log: (event) => console.log(JSON.stringify(event)),
   })
