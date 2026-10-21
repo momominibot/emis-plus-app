@@ -1,8 +1,12 @@
 # EMIS+ accounts: sign-in, orders, Health Points, referrals
 
-Status (21 Oct 2026): built and tested locally on branch `claude/emis-customer-accounts`.
-Nothing is deployed, created, registered or migrated. The app hides sign-in and points until
-the environment variables below exist, so a web redeploy today would still show "coming soon".
+Status (21 Oct 2026, branch `claude/emis-customer-accounts`): the backend is live on Supabase project
+`pgwenyjjjabzkaztkphd` (approved by Jamie; formerly mcsg-lease-desk, wiped; org Ranklore Pte Ltd; region
+ap-northeast-2, Seoul). Live: the `loyalty` migration (version 20261021074729, dry-run first, all 19
+function bodies checked against this file) and both edge functions (`loyalty`, `shopify-webhook`,
+verify_jwt off by design). Not done yet: email templates, the webhook signing secret, Shopify webhook
+registration, SMTP, Apple, Google, and any app deploy. App values are in `.env.example`; the app still
+shows "coming soon" until a build is made with them. `scripts/check-live.sh` re-runs the read-only live checks.
 
 ## How it fits together
 
@@ -72,46 +76,67 @@ reverse lookup from a referral code to its owner: unique constraints, row locks 
 
 `TIER_CONFIG` perks in `lib/types.ts` (birthday voucher, free shipping, free gift) are copy only; nothing delivers them.
 
-## Go-live gates (each needs Jamie's OK)
+## Go-live gates
 
-1. **Supabase project.** No project named "emis" is in the connected Supabase account (it lists mcsg-lease-desk and
-   ovumind, active; ranklore-dashboard and "momominibot's Project", paused). Either point to the existing one or
-   create `emis` in `ap-southeast-1` (paid; confirm cost). Everything below lives in that project.
-2. **Database.** Apply `supabase/migrations/20261020120000_loyalty.sql` as the `postgres` role (dry run inside
-   `begin; ... rollback;` first). It adds an `after update of email or delete` trigger on `auth.users`
-   (`loyalty_sync_email`, also on `deleted_at`); the dry run should confirm it is created. If that trigger ever
-   errored, Supabase Auth email changes and user deletions would fail with it, so it is kept to a lock and a
-   few small updates (soft deletes with an obfuscated address are tested). Optionally import earlier customers: `insert into loyalty.prior_customers` the
-   lowercased emails of a Shopify customer export with orders, so they cannot claim referral bonuses as "new".
-3. **Edge functions.** Deploy `shopify-webhook` and `loyalty` with `verify_jwt = false` (both authenticate in code).
-   Secrets: `SHOPIFY_WEBHOOK_SECRET`, `LOYALTY_ALLOWED_ORIGINS=https://momominibot.github.io`.
-4. **Auth URL configuration.** Site URL and redirect URLs: `https://momominibot.github.io/emis-plus-app/auth/callback`
-   and `emisapp://auth/callback`.
-5. **Email code.** Auth > Email Templates > Magic Link: show `{{ .Token }}` instead of `{{ .ConfirmationURL }}`
-   (for example "Your EMIS+ code is {{ .Token }}"). OTP length 6, expiry kept short (Supabase allows at most 1 day).
-6. **Custom SMTP (required).** Without it Supabase only emails the project's own team members, so customers get no
-   code. Set a sending service and From address (for example no-reply@ an emis.asia sending subdomain with SPF,
-   DKIM and DMARC), then raise the Auth email rate limit (30/hour after enabling custom SMTP). Supabase also
-   recommends CAPTCHA against bulk sign-up abuse.
-7. **Apple.** Apple Developer: enable Sign in with Apple on App ID `asia.emis.app` (the app now declares the
-   entitlement); create a Services ID with return URL `https://<project-ref>.supabase.co/auth/v1/callback`, and a
-   Sign in with Apple key. Supabase Apple provider: client IDs with the Services ID first, then `asia.emis.app`;
-   the generated client secret expires every 6 months and must be renewed.
-8. **Google.** Google Cloud: OAuth consent screen, then an OAuth client (type Web) with redirect URI
-   `https://<project-ref>.supabase.co/auth/v1/callback`; client ID and secret into the Supabase Google provider.
-9. **Shopify webhooks.** `orders/paid` and `refunds/create`, JSON, to
-   `https://<project-ref>.supabase.co/functions/v1/shopify-webhook`; put the signing secret in `SHOPIFY_WEBHOOK_SECRET`.
-10. **App config and builds.** `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`,
-    `EXPO_PUBLIC_AUTH_PROVIDERS=email,apple,google` (list only providers set up in 7-8),
-    `EXPO_PUBLIC_LOYALTY_ENABLED=true` (after 2-3). Web: `scripts/deploy-web.sh` (exports with `--clear`).
-    Native: new EAS build (adds supabase-js, expo-apple-authentication and the Apple entitlement; an OTA update is not enough).
-11. **Old Vercel `backend`.** `backend-theta-ashen-89.vercel.app/api/loyalty/*` still answers with fake data and its
-    webhook stub skips HMAC without a secret. Source is deleted here; remove or redeploy the project.
-12. **Privacy notice.** Mention that sign-in emails live in Supabase Auth and Health Points keep the user id, order
-    IDs, order emails and amounts (Supabase, Singapore).
+Done on 21 Oct 2026 (Jamie's go-ahead, relayed by the parent session):
+
+- **Supabase project** `pgwenyjjjabzkaztkphd`. Its dashboard name still says mcsg-lease-desk (rename in the dashboard).
+- **Database**: `supabase/migrations/20261021074729_loyalty.sql`, including the `loyalty_sync_email` trigger on
+  `auth.users`. Optional later: `insert into loyalty.prior_customers` the lowercased emails of a Shopify customer
+  export with orders, so they cannot claim referral bonuses as "new".
+- **Edge functions** `loyalty` and `shopify-webhook` deployed. `LOYALTY_ALLOWED_ORIGINS` is not set, so the default
+  `https://momominibot.github.io` applies; `SHOPIFY_SHOP_DOMAIN` defaults to `4a6920-67.myshopify.com`.
+
+Still open (each needs Jamie):
+
+1. **Email templates** (Dashboard > Authentication > Emails, or the Management API with a personal access token;
+   no token is saved on this machine). Put the 6-digit code in **both** "Confirm signup" (a brand-new user's first
+   code comes from this one) and "Magic Link" (returning users); text below. In Authentication > Providers > Email,
+   check Email OTP Length is 6 (the app takes exactly 6 digits) and set Email OTP Expiration to 600 seconds.
+2. **Custom SMTP (required for customers).** Built-in email only reaches the project's team members, so Jamie can
+   test with his own address now but customers get no code. Set a sending service and From address (for example
+   no-reply@ an emis.asia sending subdomain with SPF, DKIM and DMARC), raise the Auth email rate limit, consider
+   CAPTCHA.
+3. **Shopify webhooks.** `orders/paid` and `refunds/create`, JSON, to
+   `https://pgwenyjjjabzkaztkphd.supabase.co/functions/v1/shopify-webhook`, then set the edge function secret
+   `SHOPIFY_WEBHOOK_SECRET` (Dashboard > Edge Functions > Secrets) to the signing secret Shopify shows under
+   Settings > Notifications > Webhooks (or the app's client secret if a custom app registers them). It cannot be
+   generated here: Shopify chooses it. Until then the function answers 503 and stores nothing.
+4. **Auth URL configuration** (only needed for Apple/Google redirects): Site URL and redirect URLs
+   `https://momominibot.github.io/emis-plus-app/auth/callback` and `emisapp://auth/callback`.
+5. **Apple.** Apple Developer: enable Sign in with Apple on App ID `asia.emis.app`; create a Services ID with return
+   URL `https://pgwenyjjjabzkaztkphd.supabase.co/auth/v1/callback`, and a Sign in with Apple key. Supabase Apple
+   provider: client IDs with the Services ID first, then `asia.emis.app`; the client secret expires every 6 months.
+6. **Google.** Google Cloud OAuth client (type Web) with redirect URI
+   `https://pgwenyjjjabzkaztkphd.supabase.co/auth/v1/callback`; client ID and secret into the Supabase Google provider.
+7. **App builds.** Values are in `.env.example` (`EXPO_PUBLIC_AUTH_PROVIDERS=email` until 5-6 are done). Web:
+   `scripts/deploy-web.sh` (exports with `--clear`). Native: new EAS build (supabase-js, expo-apple-authentication,
+   the Apple entitlement; an OTA update is not enough).
+8. **Old Vercel `backend`.** `backend-theta-ashen-89.vercel.app/api/loyalty/*` still answers with fake data and its
+   webhook stub skips HMAC without a secret. Remove or redeploy it.
+9. **Privacy notice.** Sign-in emails live in Supabase Auth; Health Points keep the user id, order IDs, order emails
+   and amounts. The project is in **Seoul (ap-northeast-2)**, not Singapore, so say so (PDPA transfer obligations).
+10. **Rules.** Confirm the earning, tier and referral rules and the tier perk wording (table above).
+11. **Independent review** of commit 5558590 (Codex hit its usage limit on 21 Oct; resets 27 Oct).
+
+### Email template text
+
+Subject for both templates: `Your EMIS+ sign-in code`
+
+Body for both "Confirm signup" and "Magic Link":
+
+```html
+<h2>Your EMIS+ sign-in code</h2>
+<p>Enter this code in the EMIS+ app to sign in:</p>
+<p style="font-size:28px;font-weight:700;letter-spacing:6px;margin:16px 0">{{ .Token }}</p>
+<p>The code works once and expires in 10 minutes. If you did not ask for it, you can ignore this email.</p>
+<p>EMIS+ Medical Supplies, emis.asia</p>
+```
 
 ### First live checks
 
+- Now (after gate 1, before SMTP): Jamie, as a member of the Supabase org, can sign in with his own email on a build
+  made with `.env.example`; the code email comes from Supabase's default sender. He sees 0 points until webhooks run.
 - Sign in with each method on web and a device build; check the code email arrives from the custom sender.
 - Place a small real order with a signed-in test customer's email; Order History and points should appear.
   Refund it; the points come back off. Shopify's webhook page shows delivery status.

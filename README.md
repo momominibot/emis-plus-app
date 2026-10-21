@@ -31,7 +31,7 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 - Health Points: Supabase ledger keyed to the Supabase user, written only by HMAC-verified `orders/paid` and `refunds/create` webhooks and matched to users by confirmed email (`supabase/`)
 - Orders: the member's matched paid orders, with points, plus a link to emis.asia for details
 - Silver (1x points), Gold (1.5x, S$500), Diamond (2x, S$2,000); referral bonus of 100 points each after the friend's first paid order
-- Not live yet: see [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for the rules, tests and go-live steps
+- Backend live on Supabase `pgwenyjjjabzkaztkphd` (21 Oct 2026); app not yet released with it. Rules, tests and remaining go-live steps: [docs/ACCOUNTS.md](docs/ACCOUNTS.md)
 
 ## Tech Stack
 - **Frontend**: React Native + Expo SDK 57 + Expo Router (TypeScript)
@@ -55,6 +55,7 @@ npm run web        # Web preview
 Create `.env` in the app root (client-side only, no secrets):
 ```
 EXPO_PUBLIC_BACKEND_URL=https://your-backend.vercel.app
+# Real values: .env.example
 EXPO_PUBLIC_SUPABASE_URL=https://<ref>.supabase.co          # sign-in hidden while unset
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...      # public by design
 EXPO_PUBLIC_AUTH_PROVIDERS=email,apple,google                # only providers set up in Supabase
@@ -140,4 +141,4 @@ emis-app/
 - No medical data is collected, uploaded, or synced to any server
 - Device-to-device transfer uses local file sharing (AirDrop/email/messaging)
 - Sign-in sessions stay on the device (AsyncStorage on native, browser storage on web); accounts live in Supabase Auth
-- Health Points keep the user id, order IDs, order emails and amounts (Supabase, Singapore region)
+- Health Points keep the user id, order IDs, order emails and amounts (Supabase, Seoul region ap-northeast-2)

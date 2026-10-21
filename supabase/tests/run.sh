@@ -9,7 +9,8 @@ export LC_ALL=${LC_ALL:-en_US.UTF-8} LANG=${LANG:-en_US.UTF-8}
 
 PGBIN=${PGBIN:-$(dirname "$(command -v pg_ctl)")}
 TMP=$(mktemp -d)
-PORT=${PGPORT_TEST:-55432}
+# A free port unless one is given (other sessions may run their own test clusters).
+PORT=${PGPORT_TEST:-$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')}
 cleanup() {
   "$PGBIN/pg_ctl" -D "$TMP/data" -m immediate stop >/dev/null 2>&1 || true
   rm -rf "$TMP"
@@ -47,7 +48,7 @@ grant usage on schema auth to loyalty_owner;
 grant select, insert, update, delete, trigger on auth.users to loyalty_owner;
 SQL
 "${PSQL[@]}" -d loyalty_template -c "alter default privileges for role loyalty_owner grant all on tables to anon, authenticated, service_role; alter default privileges for role loyalty_owner grant all on functions to anon, authenticated, service_role; alter default privileges for role loyalty_owner grant all on sequences to anon, authenticated, service_role;"
-"${PSQL[@]}" -d loyalty_template -U loyalty_owner -f "${MIGRATION:-migrations/20261020120000_loyalty.sql}"
+"${PSQL[@]}" -d loyalty_template -U loyalty_owner -f "${MIGRATION:-migrations/20261021074729_loyalty.sql}"
 
 export TEST_PG_HOST=127.0.0.1 TEST_PG_PORT=$PORT
 deno test --config deno.json --allow-net --allow-env --allow-read "${@:-tests/}"
