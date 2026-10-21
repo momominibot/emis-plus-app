@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share, Image } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { brand } from '@/constants/Colors';
+import { TabHeader, ui } from '@/components/ui';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -70,32 +73,22 @@ export default function AccountScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Profile row */}
-        <View style={styles.profileRow}>
-          <View style={[styles.avatar, { backgroundColor: colors.primaryLight }]}>
-            <Text style={[styles.avatarText, { color: colors.primaryDark }]}>
-              {profile?.name?.[0]?.toUpperCase() || 'G'}
-            </Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.name, { color: colors.text }]}>{profile?.name || 'Guest'}</Text>
-            <Text style={[styles.email, { color: colors.textSecondary }]}>{profile?.email || 'guest@emis.asia'}</Text>
-          </View>
-          <View style={[styles.tierBadge, { backgroundColor: tier.color + '20' }]}>
-            <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
-          </View>
-        </View>
+        <TabHeader title={profile?.name && profile.name !== 'Guest' ? profile.name : 'My account'}
+          subtitle={profile?.email || 'Sign-in coming soon'}
+          right={
+            <View style={[styles.tierBadge, { backgroundColor: tier.color + '22' }]}>
+              <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
+            </View>
+          } />
 
         {/* Membership card */}
-        <View style={[styles.membershipCard, { backgroundColor: colors.primaryDark }]}>
+        <LinearGradient colors={[colors.primaryDark, brand.green, '#2F6FA8']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.membershipCard}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <View>
               <Text style={styles.membershipLabel}>Health Points</Text>
               <Text style={styles.membershipPoints}>{profile?.points ?? 0}</Text>
             </View>
-            <View style={[styles.membershipTier, { backgroundColor: tier.color }]}>
-              <Text style={styles.membershipTierText}>{tier.name}</Text>
-            </View>
+            <Image source={require('@/assets/images/art/banner-rewards.webp')} style={styles.membershipArt} resizeMode="contain" />
           </View>
           {nextTier && (
             <View style={{ marginTop: 16 }}>
@@ -107,7 +100,7 @@ export default function AccountScreen() {
               </Text>
             </View>
           )}
-        </View>
+        </LinearGradient>
 
         {/* Stats row */}
         <View style={styles.statsRow}>
@@ -222,7 +215,8 @@ const styles = StyleSheet.create({
   email: { fontSize: 13, marginTop: 2 },
   tierBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
   tierText: { fontSize: 12, fontWeight: '700' },
-  membershipCard: { marginHorizontal: 20, borderRadius: 20, padding: 20, shadowColor: '#1B2B2A', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
+  membershipCard: { marginHorizontal: 20, borderRadius: 22, padding: 20, overflow: 'hidden', shadowColor: '#17302A', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
+  membershipArt: { width: 72, height: 72, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.9)' },
   membershipLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '500' },
   membershipPoints: { color: '#fff', fontSize: 34, fontWeight: '700', marginTop: 4 },
   membershipTier: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },

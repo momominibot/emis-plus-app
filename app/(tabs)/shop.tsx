@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { TabHeader, ui } from '@/components/ui';
 import { getCollections, getProducts, searchProducts } from '@/lib/shopify';
 import { Collection, Product } from '@/lib/types';
 
@@ -81,9 +82,9 @@ export default function ShopScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <Text style={[styles.title, { color: colors.text }]}>Shop</Text>
+      <TabHeader title="Shop" subtitle="Prices and stock live from emis.asia" />
 
-      <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.borderStrong }]}>
+      <View style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}>
         <Ionicons name="search" size={18} color={colors.textTertiary} />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
@@ -135,11 +136,16 @@ export default function ShopScreen() {
         columnWrapperStyle={{ gap: 12 }}
         renderItem={({ item }) => (
           <Link href={`/product/${item.handle}`} asChild>
-            <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+            <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow])}>
               {item.image ? (
                 <Image source={{ uri: item.image }} style={styles.productImage} resizeMode="contain" />
               ) : (
                 <View style={[styles.productImage, { backgroundColor: colors.surfaceSunken }]} />
+              )}
+              {item.available === false && (
+                <View style={[styles.soldOut, { backgroundColor: colors.surfaceSunken }]}>
+                  <Text style={[styles.soldOutText, { color: colors.textSecondary }]}>Sold out</Text>
+                </View>
               )}
               <View style={{ padding: 12 }}>
                 {item.vendor && (
@@ -181,20 +187,22 @@ export default function ShopScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   title: { fontSize: 26, fontWeight: '700', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 14, height: 52, borderRadius: 12, borderWidth: 1.5, gap: 10 },
+  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 14, height: 50, borderRadius: 14, borderWidth: 1, gap: 10 },
   searchInput: { flex: 1, fontSize: 16 },
   categoryBar: { flexGrow: 0, flexShrink: 0 },
   categoryScroll: { paddingHorizontal: 20, paddingVertical: 10, gap: 8 },
-  categoryChip: { paddingHorizontal: 16, height: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  categoryText: { fontSize: 14, fontWeight: '600' },
+  categoryChip: { paddingHorizontal: 14, height: 36, borderRadius: 999, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  categoryText: { fontSize: 13, fontWeight: '700' },
   resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 8 },
   resultCount: { fontSize: 13, fontWeight: '500' },
   productGrid: { padding: 20, gap: 12 },
-  productCard: { flex: 1, borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
+  productCard: { flex: 1, borderRadius: 18, borderWidth: 1, overflow: 'hidden' },
+  soldOut: { position: 'absolute', top: 10, left: 10, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  soldOutText: { fontSize: 11, fontWeight: '700' },
   productImage: { width: '100%', aspectRatio: 1, backgroundColor: '#fff', padding: 8 },
-  productVendor: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginBottom: 2 },
+  productVendor: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 2 },
   productName: { fontSize: 14, fontWeight: '600', minHeight: 40 },
-  productPrice: { fontSize: 16, fontWeight: '700' },
+  productPrice: { fontSize: 16, fontWeight: '800' },
   comparePrice: { fontSize: 13, textDecorationLine: 'line-through', marginLeft: 6 },
   empty: { alignItems: 'center', padding: 40, gap: 8 },
   retryBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, marginTop: 8 },

@@ -1,138 +1,165 @@
-import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
-import { Link, useRouter } from 'expo-router';
+import { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, useWindowDimensions } from 'react-native';
+import { Link, useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
+import { brand } from '@/constants/Colors';
+import { useColors, TabHeader, SectionHeader, ui } from '@/components/ui';
+import { Drift, Rise, Blob } from '@/components/Motion';
 import { getProfile, getVouchers } from '@/lib/loyalty';
 import { getNewProducts } from '@/lib/shopify';
 import { MemberProfile, Product, Voucher, TIER_CONFIG } from '@/lib/types';
 
+const ART = {
+  hero: require('@/assets/images/art/hero-home.webp'),
+  assistant: require('@/assets/images/art/banner-assistant.webp'),
+  learn: require('@/assets/images/art/banner-learn.webp'),
+  rewards: require('@/assets/images/art/banner-rewards.webp'),
+};
+
 const SHOP_BY_NEED = [
-  { id: 'wound', label: 'Wound Care', icon: 'bandage', handle: 'wound-care-supplies-singapore' },
-  { id: 'ostomy', label: 'Ostomy', icon: 'water', handle: 'ostomy-products' },
-  { id: 'compression', label: 'Compression', icon: 'fitness', handle: 'compression-stocking' },
-  { id: 'hygiene', label: 'Hygiene', icon: 'heart', handle: 'hygiene-and-infection-control' },
+  { id: 'wound', label: 'Wound care', caption: 'Dressings and bandages', art: require('@/assets/images/art/tile-wound.webp'), handle: 'wound-care-supplies-singapore' },
+  { id: 'ostomy', label: 'Ostomy', caption: 'Pouches and barriers', art: require('@/assets/images/art/tile-ostomy.webp'), handle: 'ostomy-products' },
+  { id: 'compression', label: 'Compression', caption: 'Stockings and sizing', art: require('@/assets/images/art/tile-compression.webp'), handle: 'compression-stocking' },
+  { id: 'hygiene', label: 'Hygiene', caption: 'Gloves, masks, sanitiser', art: require('@/assets/images/art/tile-hygiene.webp'), handle: 'hygiene-and-infection-control' },
 ];
 
 export default function HomeScreen() {
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme];
+  const colors = useColors();
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const wide = width >= 640;
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [newProducts, setNewProducts] = useState<Product[]>([]);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useFocusEffect(useCallback(() => {
+    getProfile().then(setProfile);
+    getVouchers().then(setVouchers);
+  }, []));
 
-  async function loadData() {
-    const [p, v] = await Promise.all([getProfile(), getVouchers()]);
-    setProfile(p);
-    setVouchers(v);
-    try {
-      const products = await getNewProducts(6);
-      setNewProducts(products);
-    } catch { /* Shopify not configured */ }
-  }
+  useEffect(() => {
+    getNewProducts(8).then(setNewProducts).catch(() => { /* offline */ });
+  }, []);
 
   const tier = profile ? TIER_CONFIG[profile.tier] : TIER_CONFIG.silver;
   const nextTier = profile?.tier === 'silver' ? TIER_CONFIG.gold : profile?.tier === 'gold' ? TIER_CONFIG.diamond : null;
   const progress = nextTier ? Math.min(100, ((profile?.totalSpent || 0) / nextTier.minSpend) * 100) : 100;
-  const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening';
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const name = profile?.name && profile.name !== 'Guest' ? profile.name : '';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 32 }}>
-        {/* Greeting row */}
-        <View style={styles.greetingRow}>
-          <View>
-            <Text style={[styles.greetingDate, { color: colors.textSecondary }]}>
-              {new Date().toLocaleDateString('en-SG', { weekday: 'long', month: 'long', day: 'numeric' })}
-            </Text>
-            <Text style={[styles.greetingName, { color: colors.text }]}>
-              {greeting}, {profile?.name || 'there'}
-            </Text>
-          </View>
-          <View style={[styles.avatar, { backgroundColor: colors.primaryLight }]}>
-            <Text style={[styles.avatarText, { color: colors.primaryDark }]}>
-              {profile?.name?.[0]?.toUpperCase() || 'G'}
-            </Text>
-          </View>
-        </View>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 36 }}>
+        <TabHeader
+          title={`${greeting}${name ? ', ' + name : ''}`}
+          subtitle={new Date().toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' })}
+          right={
+            <TouchableOpacity onPress={() => router.push('/account')} style={[styles.avatar, { backgroundColor: colors.primaryLight }]} accessibilityLabel="Account">
+              <Text style={[styles.avatarText, { color: colors.primaryDark }]}>{(name || 'G')[0].toUpperCase()}</Text>
+            </TouchableOpacity>
+          }
+        />
 
-        {/* Search field (navigates to Shop) */}
+        {/* Search */}
         <TouchableOpacity
-          style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.borderStrong }]}
+          style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}
           onPress={() => router.push('/shop')}
+          accessibilityRole="search"
         >
           <Ionicons name="search" size={20} color={colors.textTertiary} />
-          <Text style={[styles.searchPlaceholder, { color: colors.textTertiary }]}>Search products...</Text>
+          <Text style={[styles.searchPlaceholder, { color: colors.textTertiary }]}>Search dressings, pouches, stockings...</Text>
         </TouchableOpacity>
 
-        {/* Shop by need 2x2 grid */}
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Shop by need</Text>
+        {/* Hero */}
+        <Rise style={styles.heroWrap}>
+          <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}>
+            <View style={styles.heroText}>
+              <Text style={[styles.heroEyebrow, { color: colors.primary }]}>SINGAPORE MEDICAL SUPPLIES</Text>
+              <Text style={[styles.heroTitle, { color: colors.text }]}>Wound, ostomy and compression care, in one place</Text>
+              <Text style={[styles.heroBody, { color: colors.textSecondary }]}>
+                Clinical-grade products with guides and tools to help you choose well.
+              </Text>
+              <View style={styles.heroActions}>
+                <TouchableOpacity style={[styles.heroBtn, { backgroundColor: colors.primary }]} onPress={() => router.push('/shop')}>
+                  <Text style={styles.heroBtnText}>Shop now</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.heroBtnGhost, { borderColor: colors.border }]} onPress={() => router.push('/tools/wound-advisor')}>
+                  <Text style={[styles.heroBtnGhostText, { color: colors.text }]}>Find a dressing</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={[styles.heroArtWrap, wide && { width: 240, height: 240 }]} pointerEvents="none">
+              <Blob color={brand.green} size={120} top={-10} right={-20} opacity={0.14} duration={8000} />
+              <Blob color={brand.blue} size={70} bottom={10} left={-6} opacity={0.14} duration={6500} delay={800} />
+              <Blob color={brand.amber} size={34} top={30} left={8} opacity={0.5} duration={5200} delay={300} />
+              <Drift amplitude={5} duration={5600} tilt={1} scale={0.025}>
+                <Image source={ART.hero} style={styles.heroArt} resizeMode="contain" />
+              </Drift>
+            </View>
+          </View>
+        </Rise>
+
+        {/* Shop by need */}
+        <SectionHeader title="Shop by need" actionLabel="All products" onAction={() => router.push('/shop')} />
         <View style={styles.needGrid}>
-          {SHOP_BY_NEED.map(need => (
-            <Link key={need.id} href={{ pathname: '/shop', params: { category: need.handle } }} asChild>
-              <TouchableOpacity style={StyleSheet.flatten([styles.needTile, { backgroundColor: colors.surface, borderColor: colors.border }])}>
-                <View style={[styles.needIcon, { backgroundColor: colors.primaryLight }]}>
-                  <Ionicons name={need.icon as any} size={22} color={colors.primary} />
-                </View>
+          {SHOP_BY_NEED.map((need, i) => (
+            <Rise key={need.id} delay={80 + i * 70} style={styles.needTileWrap}>
+              <TouchableOpacity
+                style={[styles.needTile, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}
+                onPress={() => router.push({ pathname: '/shop', params: { category: need.handle } })}
+                accessibilityLabel={`Shop ${need.label}`}
+              >
+                <Image source={need.art} style={styles.needArt} resizeMode="contain" />
                 <Text style={[styles.needLabel, { color: colors.text }]}>{need.label}</Text>
+                <Text style={[styles.needCaption, { color: colors.textSecondary }]}>{need.caption}</Text>
               </TouchableOpacity>
-            </Link>
+            </Rise>
           ))}
         </View>
 
-        {/* AI Assistant card */}
-        <Link href="/ai-assistant" asChild>
-          <TouchableOpacity style={StyleSheet.flatten([styles.aiCard, { backgroundColor: colors.primaryLight }])}>
-            <View style={[styles.aiIcon, { backgroundColor: colors.primary }]}>
-              <Ionicons name="chatbubble" size={22} color="#fff" />
-            </View>
+        {/* Assistant */}
+        <Rise delay={300} style={ui.gutter}>
+          <TouchableOpacity style={[styles.featureCard, { backgroundColor: colors.primaryLight }]} onPress={() => router.push('/ai-assistant')}>
+            <Drift amplitude={3} duration={4800} tilt={2} scale={0.02}>
+              <Image source={ART.assistant} style={styles.featureArt} resizeMode="contain" />
+            </Drift>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.aiTitle, { color: colors.primaryDark }]}>Not sure what to choose?</Text>
-              <Text style={[styles.aiSubtitle, { color: colors.textSecondary }]}>
-                Ask our product assistant. Product help only, not medical advice.
-              </Text>
+              <Text style={[styles.featureTitle, { color: colors.primaryDark }]}>Not sure what to choose?</Text>
+              <Text style={[styles.featureBody, { color: colors.textSecondary }]}>Ask our product assistant. Product help only, not medical advice.</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.primary} />
           </TouchableOpacity>
-        </Link>
+        </Rise>
 
-        {/* Learn card */}
-        <Link href="/learn" asChild>
-          <TouchableOpacity style={StyleSheet.flatten([styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
-            <View style={[styles.aiIcon, { backgroundColor: colors.accentLight }]}>
-              <Ionicons name="book" size={22} color={colors.accent} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={[styles.aiTitle, { color: colors.text }]}>Learn</Text>
-              <Text style={[styles.aiSubtitle, { color: colors.textSecondary }]}>
-                Plain-language guides on wound healing, stoma care and nutrition.
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </Link>
-
-        {/* Rewards compact row */}
-        <Link href="/account" asChild>
-          <TouchableOpacity style={StyleSheet.flatten([styles.rewardsRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+        {/* Learn */}
+        <Rise delay={360} style={[ui.gutter, { marginTop: 12 }]}>
+          <TouchableOpacity style={[styles.featureCard, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 }, ui.cardShadow]} onPress={() => router.push('/learn')}>
+            <Image source={ART.learn} style={styles.featureArt} resizeMode="contain" />
             <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Text style={[styles.featureTitle, { color: colors.text }]}>Learn</Text>
+              <Text style={[styles.featureBody, { color: colors.textSecondary }]}>Short reels and plain-language guides on wound healing, stoma care and nutrition.</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </Rise>
+
+        {/* Rewards */}
+        <Rise delay={420} style={[ui.gutter, { marginTop: 12 }]}>
+          <TouchableOpacity style={[styles.featureCard, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 }, ui.cardShadow]} onPress={() => router.push('/account')}>
+            <Image source={ART.rewards} style={styles.featureArt} resizeMode="contain" />
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Text style={[styles.pointsValue, { color: colors.text }]}>{profile?.points ?? 0}</Text>
                 <Text style={[styles.pointsLabel, { color: colors.textSecondary }]}>Health Points</Text>
-                <View style={[styles.tierBadge, { backgroundColor: tier.color + '20' }]}>
+                <View style={[styles.tierBadge, { backgroundColor: tier.color + '22' }]}>
                   <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
                 </View>
               </View>
               {nextTier && (
                 <View style={{ marginTop: 8 }}>
-                  <View style={[styles.progressTrack, { backgroundColor: colors.border }]}>
+                  <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSunken }]}>
                     <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: colors.accent }]} />
                   </View>
                   <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -141,20 +168,20 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
-            <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
+            <Ionicons name="chevron-forward" size={20} color={colors.textTertiary} />
           </TouchableOpacity>
-        </Link>
+        </Rise>
 
         {/* Vouchers */}
         {vouchers.length > 0 && (
           <>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Your vouchers</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
+            <SectionHeader title="Your vouchers" />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll} contentContainerStyle={styles.hScrollContent}>
               {vouchers.map(v => (
-                <View key={v.id} style={[styles.voucherCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View key={v.id} style={[styles.voucherCard, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
                   <Text style={[styles.voucherDiscount, { color: colors.accent }]}>{v.discount}</Text>
                   <Text style={[styles.voucherTitle, { color: colors.text }]}>{v.title}</Text>
-                  <Text style={[styles.voucherCode, { color: colors.textTertiary }]}>{v.code}</Text>
+                  <Text style={[styles.voucherCode, { color: colors.textSecondary }]}>{v.code}</Text>
                 </View>
               ))}
             </ScrollView>
@@ -162,35 +189,30 @@ export default function HomeScreen() {
         )}
 
         {/* New arrivals */}
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>New arrivals</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalScroll}>
-          {newProducts.length > 0 ? newProducts.map(p => (
+        <SectionHeader title="New arrivals" subtitle="Latest products on emis.asia" actionLabel="See all" onAction={() => router.push('/shop')} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll} contentContainerStyle={styles.hScrollContent}>
+          {newProducts.length === 0 ? (
+            [0, 1, 2].map(i => <View key={i} style={[styles.productCard, { backgroundColor: colors.surfaceSunken, borderColor: colors.border, height: 212 }]} />)
+          ) : newProducts.map(p => (
             <Link key={p.id} href={`/product/${p.handle}`} asChild>
-              <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+              <TouchableOpacity style={StyleSheet.flatten([styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow])}>
                 {p.image ? (
                   <Image source={{ uri: p.image }} style={styles.productImage} resizeMode="contain" />
                 ) : (
                   <View style={[styles.productImage, { backgroundColor: colors.surfaceSunken }]} />
                 )}
+                <Text style={[styles.productVendor, { color: colors.textTertiary }]} numberOfLines={1}>{p.vendor?.toUpperCase()}</Text>
                 <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{p.title}</Text>
                 <Text style={[styles.productPrice, { color: colors.text }]}>S${p.price}</Text>
               </TouchableOpacity>
             </Link>
-          )) : (
-            <View style={[styles.productCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <View style={[styles.productImage, { backgroundColor: colors.surfaceSunken }]} />
-              <Text style={[styles.productName, { color: colors.text }]}>New products coming soon</Text>
-              <Text style={[styles.productPrice, { color: colors.textTertiary }]}>--</Text>
-            </View>
-          )}
+          ))}
         </ScrollView>
 
-        {/* Trust footer */}
-        <View style={[styles.trustFooter, { backgroundColor: colors.surfaceSunken }]}>
-          <Ionicons name="shield-checkmark" size={16} color={colors.primary} />
-          <Text style={[styles.trustText, { color: colors.textSecondary }]}>
-            Authorised distributor. Singapore-based. GST-inclusive pricing.
-          </Text>
+        {/* Trust */}
+        <View style={[styles.trust, { backgroundColor: colors.surfaceSunken }]}>
+          <Ionicons name="shield-checkmark" size={18} color={colors.primary} />
+          <Text style={[styles.trustText, { color: colors.textSecondary }]}>Authorised distributor. Singapore-based. GST-inclusive pricing.</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -199,39 +221,51 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  greetingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
-  greetingDate: { fontSize: 13, fontWeight: '500' },
-  greetingName: { fontSize: 24, fontWeight: '700', marginTop: 2 },
-  avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontSize: 20, fontWeight: '700' },
-  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 16, height: 52, borderRadius: 12, borderWidth: 1.5, gap: 10 },
-  searchPlaceholder: { fontSize: 16 },
-  sectionTitle: { fontSize: 20, fontWeight: '700', paddingHorizontal: 20, marginTop: 24, marginBottom: 12 },
+  avatar: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { fontSize: 17, fontWeight: '800' },
+  searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 16, height: 50, borderRadius: 14, borderWidth: 1, gap: 10 },
+  searchPlaceholder: { fontSize: 15, flex: 1 },
+  heroWrap: { paddingHorizontal: 20, marginTop: 16 },
+  hero: { flexDirection: 'row', borderRadius: 22, borderWidth: 1, padding: 18, paddingRight: 8, gap: 4, overflow: 'hidden', minHeight: 210 },
+  heroText: { flex: 1, justifyContent: 'center', gap: 6 },
+  heroEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
+  heroTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.3 },
+  heroBody: { fontSize: 13, lineHeight: 18 },
+  heroActions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
+  heroBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
+  heroBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  heroBtnGhost: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  heroBtnGhostText: { fontWeight: '700', fontSize: 14 },
+  heroArtWrap: { width: 148, height: 184, alignItems: 'center', justifyContent: 'center' },
+  heroArt: { width: 168, height: 168 },
   needGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 12 },
-  needTile: { width: '47%', aspectRatio: 1.6, borderRadius: 16, borderWidth: 1, padding: 14, justifyContent: 'space-between' },
-  needIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  needLabel: { fontSize: 15, fontWeight: '600' },
-  aiCard: { flexDirection: 'row', alignItems: 'center', margin: 20, padding: 16, borderRadius: 16, gap: 14 },
-  aiIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  aiTitle: { fontSize: 16, fontWeight: '700' },
-  aiSubtitle: { fontSize: 13, marginTop: 2, lineHeight: 18 },
-  rewardsRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, padding: 16, borderRadius: 16, borderWidth: 1 },
-  pointsValue: { fontSize: 28, fontWeight: '700' },
-  pointsLabel: { fontSize: 14, fontWeight: '500' },
-  tierBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  tierText: { fontSize: 12, fontWeight: '700' },
+  needTileWrap: { flexBasis: '47%', flexGrow: 1 },
+  needTile: { minHeight: 132, borderRadius: 18, borderWidth: 1, padding: 14, justifyContent: 'flex-end', overflow: 'hidden' },
+  needLabel: { fontSize: 16, fontWeight: '800' },
+  needCaption: { fontSize: 12, marginTop: 2, lineHeight: 16 },
+  needArt: { position: 'absolute', top: 8, right: 8, width: 64, height: 64 },
+  featureCard: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 18, gap: 12 },
+  featureArt: { width: 64, height: 64 },
+  featureTitle: { fontSize: 16, fontWeight: '800' },
+  featureBody: { fontSize: 13, marginTop: 2, lineHeight: 18 },
+  pointsValue: { fontSize: 26, fontWeight: '800' },
+  pointsLabel: { fontSize: 14, fontWeight: '600' },
+  tierBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999 },
+  tierText: { fontSize: 12, fontWeight: '800' },
   progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   progressText: { fontSize: 12, marginTop: 4 },
-  horizontalScroll: { paddingHorizontal: 20, gap: 12 },
-  voucherCard: { width: 180, borderRadius: 12, padding: 14, borderWidth: 1, borderStyle: 'dashed' },
+  hScroll: { flexGrow: 0, flexShrink: 0 },
+  hScrollContent: { paddingHorizontal: 20, gap: 12, paddingVertical: 4 },
+  voucherCard: { width: 180, borderRadius: 14, padding: 14, borderWidth: 1, borderStyle: 'dashed' },
   voucherDiscount: { fontSize: 22, fontWeight: '800' },
   voucherTitle: { fontSize: 13, fontWeight: '600', marginTop: 4 },
   voucherCode: { fontSize: 11, marginTop: 6, fontFamily: 'monospace' },
-  productCard: { width: 150, borderRadius: 16, borderWidth: 1, overflow: 'hidden' },
-  productImage: { width: '100%', height: 130, backgroundColor: '#fff' },
-  productName: { fontSize: 13, fontWeight: '600', padding: 10, paddingBottom: 4, minHeight: 48 },
-  productPrice: { fontSize: 15, fontWeight: '700', paddingHorizontal: 10, paddingBottom: 10 },
-  trustFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 20, padding: 14, borderRadius: 12 },
+  productCard: { width: 156, borderRadius: 16, borderWidth: 1, padding: 10 },
+  productImage: { width: '100%', height: 110, borderRadius: 10, backgroundColor: '#fff' },
+  productVendor: { fontSize: 10, fontWeight: '700', marginTop: 8, letterSpacing: 0.4 },
+  productName: { fontSize: 13, fontWeight: '600', lineHeight: 17, minHeight: 34, marginTop: 2 },
+  productPrice: { fontSize: 15, fontWeight: '800', marginTop: 6 },
+  trust: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, margin: 20, padding: 14, borderRadius: 14 },
   trustText: { fontSize: 12, textAlign: 'center', flex: 1 },
 });

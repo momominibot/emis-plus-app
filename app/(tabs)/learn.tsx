@@ -10,6 +10,8 @@ import * as WebBrowser from 'expo-web-browser';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { TabHeader, ui } from '@/components/ui';
+import { Drift } from '@/components/Motion';
 import { ARTICLES, type ArticleCategory } from '@/lib/education/articles';
 import { EDUCATION_BLOGS, getBlogArticles, type BlogArticle } from '@/lib/shopify';
 import { latestReels, REELS_CHANNEL_URL, WOUND_CARE_SERIES } from '@/lib/education/reels';
@@ -47,10 +49,18 @@ export default function LearnScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-        <Text style={[styles.title, { color: colors.text }]}>Learn</Text>
-        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Plain-language guides for patients and carers. Each guide lists the clinical sources it is based on.
-        </Text>
+        <TabHeader title="Learn" subtitle="Reels and guides for patients and carers" />
+        <View style={[styles.banner, { backgroundColor: colors.secondaryLight }]}>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={[styles.bannerTitle, { color: colors.info }]}>Plain language, real sources</Text>
+            <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
+              Every guide lists the clinical sources it is based on. Reels come from the EMIS+ channel.
+            </Text>
+          </View>
+          <Drift amplitude={4} duration={5800} tilt={1.5} scale={0.02}>
+            <Image source={require('@/assets/images/art/banner-learn.webp')} style={styles.bannerArt} resizeMode="contain" />
+          </Drift>
+        </View>
 
         <View style={{ marginTop: 20 }}>
           <View style={styles.rowHead}>
@@ -79,7 +89,7 @@ export default function LearnScreen() {
               <View style={{ marginHorizontal: 20, gap: 10 }}>
                 {items.map(a => (
                   <Link key={a.slug} href={`/guide/${a.slug}`} asChild>
-                    <TouchableOpacity style={StyleSheet.flatten([styles.guideRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+                    <TouchableOpacity style={StyleSheet.flatten([styles.guideRow, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow])}>
                       <View style={[styles.guideIcon, { backgroundColor: colors.primaryLight }]}>
                         <Ionicons name={CATEGORY_ICON[a.category] as any} size={22} color={colors.primary} />
                       </View>
@@ -149,7 +159,11 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   title: { fontSize: 26, fontWeight: '700', paddingHorizontal: 20, paddingTop: 8 },
   subtitle: { fontSize: 14, lineHeight: 20, paddingHorizontal: 20, marginTop: 4 },
-  groupTitle: { fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 10 },
+  banner: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, padding: 16, borderRadius: 20, gap: 10 },
+  bannerTitle: { fontSize: 17, fontWeight: '800' },
+  bannerText: { fontSize: 13, lineHeight: 18 },
+  bannerArt: { width: 88, height: 88 },
+  groupTitle: { fontSize: 17, fontWeight: '800', paddingHorizontal: 20, marginBottom: 10 },
   rowHead: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 20, marginBottom: 10, gap: 12 },
   guideRow: { flexDirection: 'row', alignItems: 'center', padding: 14, borderRadius: 16, borderWidth: 1, gap: 14 },
   guideIcon: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },

@@ -1,0 +1,16 @@
+{
+ "model": "doubao-seedream-5-0-pro-260628",
+ "prompt": "An open book with a stethoscope resting on it, a round play button badge floating above and a small potted plant, patient education concept. Flat vector illustration, clean modern medical app style, soft rounded shapes, gentle gradients, palette emerald green #209070 and soft blue #4068B0 with small accents of coral #F07068 and amber #F8C048, plain pure white background, no text, no letters, no logo, no watermark, centred composition with generous margins.",
+ "size_req": "1024x1024",
+ "size": "1024x1024",
+ "seed": -1,
+ "refs": [],
+ "usage": {
+  "input_images": 0,
+  "generated_images": 1,
+  "output_tokens": 4096,
+  "total_tokens": 4096
+ },
+ "seconds": 39.9,
+ "bytes": 1366508
+}

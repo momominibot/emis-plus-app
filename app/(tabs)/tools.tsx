@@ -2,8 +2,11 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'react-native';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { TabHeader, ui } from '@/components/ui';
+import { Drift } from '@/components/Motion';
 
 const TOOL_GROUPS = [
   {
@@ -45,14 +48,23 @@ export default function ToolsScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
-        <Text style={[styles.title, { color: colors.text }]}>Health tools</Text>
+        <TabHeader title="Health tools" subtitle="Guided checks and private records" />
 
-        {/* Privacy banner */}
-        <View style={[styles.privacyBanner, { backgroundColor: colors.primaryLight }]}>
-          <Ionicons name="lock-closed" size={18} color={colors.primaryDark} />
-          <Text style={[styles.privacyText, { color: colors.primaryDark }]}>
-            Your records stay on this phone. We never upload them.
-          </Text>
+        {/* Banner */}
+        <View style={[styles.banner, { backgroundColor: colors.primaryLight }]}>
+          <View style={{ flex: 1, gap: 6 }}>
+            <Text style={[styles.bannerTitle, { color: colors.primaryDark }]}>Choose well, track clearly</Text>
+            <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
+              Quick checks point you to the right product type. Records stay on this phone and are never uploaded.
+            </Text>
+            <View style={styles.privacyRow}>
+              <Ionicons name="lock-closed" size={14} color={colors.primaryDark} />
+              <Text style={[styles.privacyText, { color: colors.primaryDark }]}>Private by design</Text>
+            </View>
+          </View>
+          <Drift amplitude={4} duration={5400} tilt={1.5} scale={0.02}>
+            <Image source={require('@/assets/images/art/banner-tools.webp')} style={styles.bannerArt} resizeMode="contain" />
+          </Drift>
         </View>
 
         {TOOL_GROUPS.map(group => (
@@ -61,7 +73,7 @@ export default function ToolsScreen() {
             <View style={{ marginHorizontal: 20, gap: 10 }}>
               {group.tools.map(tool => (
                 <Link key={tool.id} href={tool.route as any} asChild>
-                  <TouchableOpacity style={StyleSheet.flatten([styles.toolRow, { backgroundColor: colors.surface, borderColor: colors.border }])}>
+                  <TouchableOpacity style={StyleSheet.flatten([styles.toolRow, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow])}>
                     <View style={[styles.toolIcon, { backgroundColor: colors.primaryLight }]}>
                       <Ionicons name={tool.icon as any} size={24} color={colors.primary} />
                     </View>
@@ -92,10 +104,14 @@ export default function ToolsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   title: { fontSize: 26, fontWeight: '700', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  privacyBanner: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, padding: 14, borderRadius: 12, gap: 10 },
-  privacyText: { fontSize: 14, fontWeight: '500', flex: 1 },
-  groupTitle: { fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 10 },
-  toolRow: { flexDirection: 'row', alignItems: 'center', minHeight: 76, padding: 14, borderRadius: 16, borderWidth: 1, gap: 14 },
+  banner: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, padding: 16, borderRadius: 20, gap: 10 },
+  bannerTitle: { fontSize: 18, fontWeight: '800' },
+  bannerText: { fontSize: 13, lineHeight: 18 },
+  bannerArt: { width: 96, height: 96 },
+  privacyRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  privacyText: { fontSize: 12, fontWeight: '700' },
+  groupTitle: { fontSize: 17, fontWeight: '800', paddingHorizontal: 20, marginBottom: 10 },
+  toolRow: { flexDirection: 'row', alignItems: 'center', minHeight: 76, padding: 14, borderRadius: 18, borderWidth: 1, gap: 14 },
   toolIcon: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   toolTitle: { fontSize: 16, fontWeight: '600' },
   toolDesc: { fontSize: 13, marginTop: 2 },
