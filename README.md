@@ -36,8 +36,8 @@ A cross-platform mobile app for emis.asia - essential medical supplies store in 
 - **Frontend**: React Native + Expo SDK 57 + Expo Router (TypeScript)
 - **Commerce**: Shopify Storefront API with tokenless access (products, collections, search, blog articles). No API key in the app or backend; checkout happens on emis.asia
 - **Local Storage**: expo-sqlite (medical data, 100% on-device)
-- **Backend**: Vercel serverless functions (AI proxy, loyalty, Shopify webhooks)
-- **AI**: Volcengine Ark (Doubao) via backend proxy
+- **Backend**: none yet on this branch (Supabase sign-in and points are on `claude/emis-customer-accounts`)
+- **AI**: product assistant uses built-in answers until a server-side proxy exists
 
 ## Quick Start
 
@@ -64,26 +64,9 @@ scripts/deploy-web.sh
 ```
 Builds a single-page web export (`experiments.baseUrl` is `/emis-plus-app`), copies `index.html` to `404.html` so deep links work, and adds one commit to the `gh-pages` branch. On the web, medical records use `lib/db.web.ts` (browser localStorage) because expo-sqlite needs cross-origin isolation headers that GitHub Pages cannot send.
 
-## Backend Deployment
+## Backend
 
-```bash
-cd backend
-npm install
-vercel --prod
-```
-
-Set environment variables in Vercel dashboard:
-- `SHOPIFY_ADMIN_TOKEN` - Shopify Admin API token (shpat_ prefix, server-side only)
-- `SHOP_DOMAIN` - Shopify store domain (e.g. 4a6920-67.myshopify.com)
-- `SHOPIFY_WEBHOOK_SECRET` - Webhook signing secret
-- `AI_API_KEY` - OpenRouter API key
-- `AI_BASE_URL` - OpenRouter base URL (https://openrouter.ai/api/v1)
-- `AI_MODEL` - AI model (e.g. openai/gpt-4o-mini)
-
-### Shopify Webhook Setup
-1. Go to Shopify Admin > Settings > Notifications > Webhooks
-2. Create webhook: Event = "Order payment", URL = `https://your-backend.vercel.app/api/webhooks/shopify`
-3. Copy the webhook secret to `SHOPIFY_WEBHOOK_SECRET`
+The old Vercel backend (AI proxy, loyalty, Shopify webhook) was removed on 21 October 2026. Sign-in, Health Points and order matching are being rebuilt on Supabase (branch `claude/emis-customer-accounts`, see its `docs/ACCOUNTS.md`). The product assistant falls back to built-in answers until a new proxy exists; never put an AI or Shopify key in `EXPO_PUBLIC_` variables.
 
 ## App Store Submission
 
@@ -126,12 +109,6 @@ emis-app/
     ai.ts            # AI assistant
     export.ts        # CSV/export utilities
     types.ts         # TypeScript types
-  backend/           # Vercel serverless functions
-    api/
-      ai/chat.ts
-      loyalty/points.ts
-      loyalty/referral.ts
-      webhooks/shopify.ts
 ```
 
 ## Privacy

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share,
 import { LinearGradient } from 'expo-linear-gradient';
 import { brand } from '@/constants/Colors';
 import { TabHeader, ui } from '@/components/ui';
+import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -72,7 +73,7 @@ export default function AccountScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: TAB_BAR_SPACE }}>
         <TabHeader title={profile?.name && profile.name !== 'Guest' ? profile.name : 'My account'}
           subtitle={profile?.email || 'Sign-in coming soon'}
           right={
@@ -216,7 +217,7 @@ const styles = StyleSheet.create({
   tierBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
   tierText: { fontSize: 12, fontWeight: '700' },
   membershipCard: { marginHorizontal: 20, borderRadius: 22, padding: 20, overflow: 'hidden', shadowColor: '#17302A', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
-  membershipArt: { width: 72, height: 72, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.9)' },
+  membershipArt: { width: 84, height: 84 },
   membershipLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '500' },
   membershipPoints: { color: '#fff', fontSize: 34, fontWeight: '700', marginTop: 4 },
   membershipTier: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },

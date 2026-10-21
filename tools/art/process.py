@@ -8,6 +8,7 @@ from PIL import Image, ImageChops
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 RAW = os.path.join(ROOT, "art", "raw")
+CUT = os.path.join(ROOT, "art", "cut")  # rembg cutouts (RGBA) win over raw when present
 OUT = os.path.join(ROOT, "assets", "images", "art")
 SIZES = {"hero": 720, "tile": 320, "banner": 320}
 
@@ -39,8 +40,20 @@ def main():
         job = name[:-4]
         if only and job not in only:
             continue
-        im = Image.open(os.path.join(RAW, name)).convert("RGB")
-        im = trim(im)
+        cut = os.path.join(CUT, name)
+        if os.path.exists(cut):
+            im = Image.open(cut).convert("RGBA")
+            box = im.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox()
+            if box:
+                w, h = im.size; px = int(w * 0.03)
+                im = im.crop((max(0, box[0]-px), max(0, box[1]-px), min(w, box[2]+px), min(h, box[3]+px)))
+            side = max(im.size)
+            canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            canvas.paste(im, ((side - im.size[0]) // 2, (side - im.size[1]) // 2))
+            im = canvas
+        else:
+            im = Image.open(os.path.join(RAW, name)).convert("RGB")
+            im = trim(im)
         target = SIZES.get(job.split("-")[0], 320)
         im.thumbnail((target, target), Image.LANCZOS)
         dst = os.path.join(OUT, job + ".webp")

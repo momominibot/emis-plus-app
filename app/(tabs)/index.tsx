@@ -5,7 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { brand } from '@/constants/Colors';
 import { useColors, TabHeader, SectionHeader, ui } from '@/components/ui';
-import { Drift, Rise, Blob } from '@/components/Motion';
+import { Drift, Rise } from '@/components/Motion';
+import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { getProfile, getVouchers } from '@/lib/loyalty';
 import { getNewProducts } from '@/lib/shopify';
 import { MemberProfile, Product, Voucher, TIER_CONFIG } from '@/lib/types';
@@ -51,7 +52,7 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 36 }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: TAB_BAR_SPACE }}>
         <TabHeader
           title={`${greeting}${name ? ', ' + name : ''}`}
           subtitle={new Date().toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' })}
@@ -74,10 +75,10 @@ export default function HomeScreen() {
 
         {/* Hero */}
         <Rise style={styles.heroWrap}>
-          <View style={[styles.hero, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}>
+          <View style={[styles.hero, { backgroundColor: colors.primaryLight }]}>
             <View style={styles.heroText}>
               <Text style={[styles.heroEyebrow, { color: colors.primary }]}>SINGAPORE MEDICAL SUPPLIES</Text>
-              <Text style={[styles.heroTitle, { color: colors.text }]}>Wound, ostomy and compression care, in one place</Text>
+              <Text style={[styles.heroTitle, { color: colors.primaryDark }]}>Wound, ostomy and compression care, in one place</Text>
               <Text style={[styles.heroBody, { color: colors.textSecondary }]}>
                 Clinical-grade products with guides and tools to help you choose well.
               </Text>
@@ -85,17 +86,17 @@ export default function HomeScreen() {
                 <TouchableOpacity style={[styles.heroBtn, { backgroundColor: colors.primary }]} onPress={() => router.push('/shop')}>
                   <Text style={styles.heroBtnText}>Shop now</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.heroBtnGhost, { borderColor: colors.border }]} onPress={() => router.push('/tools/wound-advisor')}>
-                  <Text style={[styles.heroBtnGhostText, { color: colors.text }]}>Find a dressing</Text>
+                <TouchableOpacity style={[styles.heroBtnGhost, { backgroundColor: colors.surface }]} onPress={() => router.push('/tools/wound-advisor')}>
+                  <Text style={[styles.heroBtnGhostText, { color: colors.primaryDark }]}>Find a dressing</Text>
                 </TouchableOpacity>
               </View>
             </View>
-            <View style={[styles.heroArtWrap, wide && { width: 240, height: 240 }]} pointerEvents="none">
-              <Blob color={brand.green} size={120} top={-10} right={-20} opacity={0.14} duration={8000} />
-              <Blob color={brand.blue} size={70} bottom={10} left={-6} opacity={0.14} duration={6500} delay={800} />
-              <Blob color={brand.amber} size={34} top={30} left={8} opacity={0.5} duration={5200} delay={300} />
-              <Drift amplitude={5} duration={5600} tilt={1} scale={0.025}>
-                <Image source={ART.hero} style={styles.heroArt} resizeMode="contain" />
+            <View style={[styles.heroArtWrap, wide && { width: 250, height: 250 }]} pointerEvents="none">
+              <Drift amplitude={0} duration={7000} tilt={0} scale={0.05} style={styles.heroStage}>
+                <View style={[styles.heroStageCircle, { backgroundColor: colors.primary, opacity: 0.1 }]} />
+              </Drift>
+              <Drift amplitude={5} duration={5600} tilt={0.8} scale={0.02}>
+                <Image source={ART.hero} style={[styles.heroArt, wide && { width: 250, height: 250 }]} resizeMode="contain" />
               </Drift>
             </View>
           </View>
@@ -226,7 +227,7 @@ const styles = StyleSheet.create({
   searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 16, height: 50, borderRadius: 14, borderWidth: 1, gap: 10 },
   searchPlaceholder: { fontSize: 15, flex: 1 },
   heroWrap: { paddingHorizontal: 20, marginTop: 16 },
-  hero: { flexDirection: 'row', borderRadius: 22, borderWidth: 1, padding: 18, paddingRight: 8, gap: 4, overflow: 'hidden', minHeight: 210 },
+  hero: { flexDirection: 'row', borderRadius: 24, padding: 18, paddingRight: 6, gap: 2, overflow: 'hidden', minHeight: 216 },
   heroText: { flex: 1, justifyContent: 'center', gap: 6 },
   heroEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
   heroTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.3 },
@@ -234,10 +235,12 @@ const styles = StyleSheet.create({
   heroActions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
   heroBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
   heroBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  heroBtnGhost: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12, borderWidth: 1 },
+  heroBtnGhost: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
   heroBtnGhostText: { fontWeight: '700', fontSize: 14 },
-  heroArtWrap: { width: 148, height: 184, alignItems: 'center', justifyContent: 'center' },
-  heroArt: { width: 168, height: 168 },
+  heroArtWrap: { width: 156, height: 190, alignItems: 'center', justifyContent: 'center' },
+  heroStage: { position: 'absolute', top: 24, left: 8, right: 8, bottom: 24, alignItems: 'center', justifyContent: 'center' },
+  heroStageCircle: { width: 136, height: 136, borderRadius: 68 },
+  heroArt: { width: 176, height: 176 },
   needGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 12 },
   needTileWrap: { flexBasis: '47%', flexGrow: 1 },
   needTile: { minHeight: 132, borderRadius: 18, borderWidth: 1, padding: 14, justifyContent: 'flex-end', overflow: 'hidden' },

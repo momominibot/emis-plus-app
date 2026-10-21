@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { TabHeader, ui } from '@/components/ui';
+import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { getCollections, getProducts, searchProducts } from '@/lib/shopify';
 import { Collection, Product } from '@/lib/types';
 
@@ -195,13 +196,13 @@ const styles = StyleSheet.create({
   categoryText: { fontSize: 13, fontWeight: '700' },
   resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 8 },
   resultCount: { fontSize: 13, fontWeight: '500' },
-  productGrid: { padding: 20, gap: 12 },
+  productGrid: { padding: 20, gap: 12, paddingBottom: TAB_BAR_SPACE },
   productCard: { flex: 1, borderRadius: 18, borderWidth: 1, overflow: 'hidden' },
   soldOut: { position: 'absolute', top: 10, left: 10, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   soldOutText: { fontSize: 11, fontWeight: '700' },
   productImage: { width: '100%', aspectRatio: 1, backgroundColor: '#fff', padding: 8 },
   productVendor: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 2 },
-  productName: { fontSize: 14, fontWeight: '600', minHeight: 40 },
+  productName: { fontSize: 14, fontWeight: '600', lineHeight: 18, minHeight: 36 },
   productPrice: { fontSize: 16, fontWeight: '800' },
   comparePrice: { fontSize: 13, textDecorationLine: 'line-through', marginLeft: 6 },
   empty: { alignItems: 'center', padding: 40, gap: 8 },

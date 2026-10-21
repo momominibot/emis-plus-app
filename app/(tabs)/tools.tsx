@@ -6,6 +6,7 @@ import { Image } from 'react-native';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { TabHeader, ui } from '@/components/ui';
+import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { Drift } from '@/components/Motion';
 
 const TOOL_GROUPS = [
@@ -47,7 +48,7 @@ export default function ToolsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: TAB_BAR_SPACE }}>
         <TabHeader title="Health tools" subtitle="Guided checks and private records" />
 
         {/* Banner */}

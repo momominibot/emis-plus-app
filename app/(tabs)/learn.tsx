@@ -11,6 +11,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { TabHeader, ui } from '@/components/ui';
+import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { Drift } from '@/components/Motion';
 import { ARTICLES, type ArticleCategory } from '@/lib/education/articles';
 import { EDUCATION_BLOGS, getBlogArticles, type BlogArticle } from '@/lib/shopify';
@@ -48,7 +49,7 @@ export default function LearnScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: TAB_BAR_SPACE }}>
         <TabHeader title="Learn" subtitle="Reels and guides for patients and carers" />
         <View style={[styles.banner, { backgroundColor: colors.secondaryLight }]}>
           <View style={{ flex: 1, gap: 4 }}>
