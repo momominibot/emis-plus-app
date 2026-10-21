@@ -35,11 +35,11 @@ export function createLoyaltyDb(url: string, options: { max?: number } = {}): Lo
       return row.r;
     },
     async getMember(m) {
-      const [row] = await sql`select loyalty.get_member(${m.memberId}::uuid, ${m.email}, ${m.emailProven}) as r`;
+      const [row] = await sql`select loyalty.get_member(${m.memberId}::uuid, ${m.email}, ${m.proofAt}::timestamptz) as r`;
       return row.r;
     },
     async claimReferral(m, code) {
-      const [row] = await sql`select loyalty.claim_referral(${m.memberId}::uuid, ${m.email}, ${code}) as r`;
+      const [row] = await sql`select loyalty.claim_referral(${m.memberId}::uuid, ${m.email}, ${code}, ${m.proofAt}::timestamptz) as r`;
       return row.r as { outcome: ReferralOutcome };
     },
     end: () => sql.end({ timeout: 5 }),

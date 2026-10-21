@@ -45,6 +45,7 @@ const REFERRAL_MESSAGES: Record<string, string> = {
   already_claimed: 'You have already used a referral code.',
   not_new_customer: 'Referral codes are for customers placing their first order.',
   mutual_referral: "You can't use the code of someone you referred.",
+  email_not_proven: 'Confirm your email with the code we send you first, then enter the referral code.',
 };
 
 export async function claimReferral(code: string): Promise<{ ok: boolean; message: string }> {

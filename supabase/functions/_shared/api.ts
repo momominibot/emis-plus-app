@@ -12,15 +12,18 @@ import type { LoyaltyDb, Member } from './types.ts';
 
 export interface AuthUser {
   id: string;
+  /** The user's email as Supabase Auth has it now (from getUser). */
   email: string | null;
   emailConfirmed: boolean;
-  /** How this session was signed in (the access token's amr methods: otp, oauth, ...). */
-  methods: string[];
+  /** The email claim of the access token used for this request. */
+  tokenEmail: string | null;
+  /** How this session was signed in: the access token's amr entries (unix seconds). */
+  amr: { method: string; timestamp: number }[];
   /** Identity providers linked to the user (app_metadata.providers: email, google, apple, ...). */
   providers: string[];
 }
 
-// Sign-in methods that prove the person reads the mailbox right now.
+// Sign-in methods that prove the person read the mailbox at that moment.
 const MAILBOX_METHODS = new Set(['otp', 'magiclink', 'email/signup', 'email_change', 'invite', 'recovery']);
 // Addresses the identity provider itself runs, so its word is final.
 const PROVIDER_DOMAINS: Record<string, string[]> = {
@@ -29,14 +32,24 @@ const PROVIDER_DOMAINS: Record<string, string[]> = {
 };
 
 /**
- * Whether this user may have Shopify orders matched to their email. A
- * provider's "verified" flag is not enough on its own: Google, for example,
- * can keep an address on another domain after that mailbox changes hands.
+ * When this session proved control of `email`, or null. A provider's
+ * "verified" flag is not enough on its own: a Google account can keep an
+ * address on another domain after that mailbox changes hands, and Supabase
+ * links such a sign-in to whoever holds the address now. The database also
+ * ignores proof older than an unconfirmed move of the address by Auth.
  */
-export function mailboxProven(user: AuthUser, email: string): boolean {
-  if (user.methods.some((m) => MAILBOX_METHODS.has(m))) return true;
+export function mailboxProofAt(user: AuthUser, email: string): string | null {
+  // A token issued for another address proves nothing about this one.
+  if (normalizeEmail(user.tokenEmail) !== email) return null;
+  const at = (entries: { timestamp: number }[]) => {
+    const latest = Math.max(...entries.map((e) => e.timestamp).filter((t) => Number.isFinite(t) && t > 0));
+    return Number.isFinite(latest) ? new Date(latest * 1000).toISOString() : null;
+  };
+  const mailbox = user.amr.filter((a) => MAILBOX_METHODS.has(a.method));
+  if (mailbox.length > 0) return at(mailbox);
   const domain = email.split('@')[1] ?? '';
-  return user.providers.some((p) => (PROVIDER_DOMAINS[p] ?? []).includes(domain));
+  if (user.providers.some((p) => (PROVIDER_DOMAINS[p] ?? []).includes(domain))) return at(user.amr);
+  return null;
 }
 
 export interface ApiConfig {
@@ -107,7 +120,7 @@ export async function handleLoyaltyRequest(req: Request, cfg: ApiConfig): Promis
     if (!user || !UUID.test(user.id)) return reply(401, { error: 'sign_in_required' });
     const email = normalizeEmail(user.email);
     if (!email || !user.emailConfirmed) return reply(403, { error: 'email_not_confirmed' });
-    const member: Member = { memberId: user.id.toLowerCase(), email, emailProven: mailboxProven(user, email) };
+    const member: Member = { memberId: user.id.toLowerCase(), email, proofAt: mailboxProofAt(user, email) };
 
     if (route === 'me') {
       return reply(200, { member: await cfg.db.getMember(member) });

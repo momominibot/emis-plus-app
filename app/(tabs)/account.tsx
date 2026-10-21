@@ -95,7 +95,7 @@ export default function AccountScreen() {
               {user?.email || (user ? 'Signed in' : 'Not signed in')}
             </Text>
           </View>
-          {membership && (
+          {membership?.ordersLinked && (
             <View style={[styles.tierBadge, { backgroundColor: tier.color + '20' }]}>
               <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
             </View>
@@ -124,11 +124,11 @@ export default function AccountScreen() {
               You are signed in. Points for paid orders will show here once Health Points start.
             </Text>
           </View>
+        ) : membership && !membership.ordersLinked ? (
+          // This sign-in has not proven the mailbox: nothing to show until it does.
+          <SignInPanel confirmEmail={membership.email} onConfirmed={reload} />
         ) : (
           <>
-            {membership && !membership.ordersLinked && (
-              <SignInPanel confirmEmail={membership.email} onConfirmed={reload} />
-            )}
             {/* Membership card */}
             <View style={[styles.membershipCard, { backgroundColor: colors.primaryDark }]}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>

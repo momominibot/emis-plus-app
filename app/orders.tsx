@@ -77,7 +77,7 @@ export default function OrdersScreen() {
         ListEmptyComponent={
           membership === null ? (
             <ActivityIndicator style={{ marginTop: 40 }} color={colors.primary} />
-          ) : (
+          ) : !membership.ordersLinked ? null : (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <Text style={[styles.title, { color: colors.text }]}>No orders yet</Text>
               <Text style={[styles.body, { color: colors.textSecondary }]}>

@@ -135,6 +135,12 @@ class FakeSupabase:
             if url.path.endswith("/referral"):
                 self.claimed = body.get("code")
                 return route.fulfill(json={"outcome": "pending"}, headers=CORS)
+            if not self.linked:  # what the server sends a sign-in that has not proven the mailbox
+                return route.fulfill(json={"member": {
+                    "memberId": USER_ID, "email": "pat@example.com", "ordersLinked": False, "points": 0, "tier": "silver",
+                    "totalSpentCents": 0, "referralCode": None, "referralsCompleted": 0, "referralsPending": 0,
+                    "referredStatus": None, "transactions": [], "orders": [],
+                }}, headers=CORS)
             return route.fulfill(json={"member": {
                 "memberId": USER_ID, "email": "pat@example.com", "ordersLinked": self.linked, "points": 345, "tier": "silver", "totalSpentCents": 34500,
                 "referralCode": "ABCD2345", "referralsCompleted": 1, "referralsPending": 0,
@@ -225,12 +231,14 @@ def run(web_test, web_plain):
         fake.linked = False
         with page.expect_navigation(url="**" + BASE + "/account", timeout=20000):
             page.get_by_text("Continue with Google").click()
-        page.get_by_text("Your referral code").wait_for(timeout=15000)
+        page.get_by_text("Connect your emis.asia orders").wait_for(timeout=15000)
         check(fake.authorize is not None and fake.authorize.get("provider") == "google", "Google goes through Supabase authorize")
         check(fake.authorize.get("redirect_to") == origin + BASE + "/auth/callback", "redirect_to is the web callback")
         check(len(fake.exchanges) == 1, "PKCE code exchanged once with a matching verifier")
-        page.get_by_text("Connect your emis.asia orders").wait_for()
-        check(True, "unproven mailbox asks to connect orders")
+        check(page.get_by_text("Your referral code").count() == 0
+              and page.get_by_text("Points come from paid orders", exact=False).count() == 0
+              and page.get_by_text("Silver", exact=True).count() == 0,
+              "unproven sign-in shows only the confirm step, no points card or tier")
         shot(page, "account-confirm-email")
         otp_before = len(fake.otp)
         page.get_by_text("Email me a code").click()
@@ -239,8 +247,9 @@ def run(web_test, web_plain):
               "confirm code goes to the signed-in email, not a typed one")
         page.get_by_placeholder("6-digit code").fill("123456")
         page.get_by_text("Confirm", exact=True).click()
-        page.get_by_text("Connect your emis.asia orders").wait_for(state="detached", timeout=15000)
-        check(fake.verify[-1].get("type") == "email" and fake.linked, "a confirmed code connects the orders")
+        page.get_by_text("Your referral code").wait_for(timeout=15000)
+        check(fake.verify[-1].get("type") == "email" and fake.linked and page.get_by_text("Connect your emis.asia orders").count() == 0,
+              "a confirmed code connects the orders and shows the points")
         httpd.shutdown()
 
         # ---- unconfigured build

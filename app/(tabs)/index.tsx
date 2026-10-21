@@ -45,7 +45,9 @@ export default function HomeScreen() {
     ? 'Health Points launch soon with EMIS+ accounts.'
     : !user
       ? 'Sign in to collect Health Points on paid orders.'
-      : null;
+      : membership && !membership.ordersLinked
+        ? 'Confirm your email to see your Health Points.'
+        : null;
   const greeting = new Date().getHours() < 12 ? 'Good morning' : new Date().getHours() < 18 ? 'Good afternoon' : 'Good evening';
 
   return (

@@ -40,22 +40,29 @@ async function getUser(token: string): Promise<AuthUser | null> {
   const user = data.user;
   if (!user) return null;
   const providers = Array.isArray(user.app_metadata?.providers) ? user.app_metadata.providers.map(String) : [];
+  const claims = tokenClaims(token);
   return {
     id: user.id,
     email: user.email ?? null,
     emailConfirmed: Boolean(user.email_confirmed_at),
-    methods: amrMethods(token),
+    tokenEmail: typeof claims.email === 'string' ? claims.email : null,
+    amr: Array.isArray(claims.amr)
+      ? claims.amr.map((a: { method?: unknown; timestamp?: unknown }) => ({
+          method: String(a?.method ?? ''),
+          timestamp: Number(a?.timestamp ?? 0),
+        }))
+      : [],
     providers,
   };
 }
 
-/** The amr methods of a token Supabase Auth has just accepted (getUser checked it). */
-function amrMethods(token: string): string[] {
+/** Claims of a token Supabase Auth has just accepted (getUser checked it). */
+function tokenClaims(token: string): { email?: unknown; amr?: unknown } {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return Array.isArray(payload.amr) ? payload.amr.map((a: { method?: unknown }) => String(a?.method ?? '')) : [];
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(part + '='.repeat((4 - (part.length % 4)) % 4)));
   } catch {
-    return [];
+    return {};
   }
 }
 

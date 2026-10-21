@@ -39,7 +39,10 @@ SQL
 # Stand-in for Supabase's auth.users, so the email-sync trigger is created and tested.
 "${PSQL[@]}" -d loyalty_template <<'SQL'
 create schema auth;
-create table auth.users (id uuid primary key, email text unique, email_confirmed_at timestamptz);
+create table auth.users (
+  id uuid primary key, email text unique, email_confirmed_at timestamptz,
+  email_change text default '', deleted_at timestamptz
+);
 grant usage on schema auth to loyalty_owner;
 grant select, insert, update, delete, trigger on auth.users to loyalty_owner;
 SQL

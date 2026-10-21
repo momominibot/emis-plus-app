@@ -4,7 +4,7 @@
 import { assert, assertEquals, assertThrows } from 'jsr:@std/assert@1.0.13';
 import { idFrom, moneyToCents, normalizeEmail, parseJsonLossless, parsePaidOrder, parseRefund } from '../functions/_shared/parse.ts';
 import { handleShopifyWebhook, verifyShopifyHmac } from '../functions/_shared/webhook.ts';
-import { handleLoyaltyRequest, mailboxProven, type AuthUser } from '../functions/_shared/api.ts';
+import { handleLoyaltyRequest, mailboxProofAt, type AuthUser } from '../functions/_shared/api.ts';
 import type { LoyaltyDb, Member, PaidOrderInput, RefundInput } from '../functions/_shared/types.ts';
 
 const SHOP = '4a6920-67.myshopify.com';
@@ -259,12 +259,16 @@ Deno.test('webhook: unknown topics are acknowledged; database failures ask Shopi
 // ---------------------------------------------------------------- loyalty API
 
 const USER_A = '6f9619ff-8b86-d011-b42d-00c04fc964ff';
+const T = 1792000000; // an amr timestamp (unix seconds)
+const AT = new Date(T * 1000).toISOString();
+const user = (id: string, email: string | null, confirmed: boolean, method: string, providers: string[]): AuthUser =>
+  ({ id, email, emailConfirmed: confirmed, tokenEmail: email, amr: [{ method, timestamp: T }], providers });
 const USERS: Record<string, AuthUser> = {
-  'token-a': { id: USER_A, email: 'Pat@Example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
-  'token-unconfirmed': { id: '11111111-1111-4111-8111-111111111111', email: 'new@example.com', emailConfirmed: false, methods: ['otp'], providers: ['email'] },
-  'token-no-email': { id: '22222222-2222-4222-8222-222222222222', email: null, emailConfirmed: true, methods: ['oauth'], providers: ['apple'] },
-  'token-bad-id': { id: 'not-a-uuid', email: 'x@example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
-  'token-google-work': { id: '33333333-3333-4333-8333-333333333333', email: 'pat@company.sg', emailConfirmed: true, methods: ['oauth'], providers: ['email', 'google'] },
+  'token-a': user(USER_A, 'Pat@Example.com', true, 'otp', ['email']),
+  'token-unconfirmed': user('11111111-1111-4111-8111-111111111111', 'new@example.com', false, 'otp', ['email']),
+  'token-no-email': user('22222222-2222-4222-8222-222222222222', null, true, 'oauth', ['apple']),
+  'token-bad-id': user('not-a-uuid', 'x@example.com', true, 'otp', ['email']),
+  'token-google-work': user('33333333-3333-4333-8333-333333333333', 'pat@company.sg', true, 'oauth', ['email', 'google']),
 };
 
 function apiCfg(db: LoyaltyDb, getUser: (token: string) => Promise<AuthUser | null> = async (t) => USERS[t] ?? null) {
@@ -290,7 +294,7 @@ Deno.test('api: GET /me uses the user Supabase Auth returns, never ids from the 
   const res = await handleLoyaltyRequest(get('token-a', 'https://momominibot.github.io'), cfg);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get('access-control-allow-origin'), 'https://momominibot.github.io');
-  assertEquals(calls.members, [{ memberId: USER_A, email: 'pat@example.com', emailProven: true }]);
+  assertEquals(calls.members, [{ memberId: USER_A, email: 'pat@example.com', proofAt: AT }]);
   assertEquals(seen, ['token-a']);
   assertEquals((await handleLoyaltyRequest(get('stolen'), cfg)).status, 401);
   assertEquals((await handleLoyaltyRequest(get(), cfg)).status, 401);
@@ -311,22 +315,26 @@ Deno.test('api: mailbox proof comes from how the user signed in, not the provide
   const { db, calls } = fakeDb();
   const { cfg } = apiCfg(db);
   assertEquals((await handleLoyaltyRequest(get('token-google-work'), cfg)).status, 200);
-  assertEquals(calls.members, [{ memberId: '33333333-3333-4333-8333-333333333333', email: 'pat@company.sg', emailProven: false }]);
-  const u = (methods: string[], providers: string[], email: string): AuthUser =>
-    ({ id: USER_A, email, emailConfirmed: true, methods, providers });
-  const cases: [AuthUser, boolean][] = [
-    [u(['otp'], ['email'], 'pat@company.sg'), true], // emailed 6-digit code
-    [u(['magiclink'], ['email'], 'pat@company.sg'), true],
-    [u(['oauth'], ['google'], 'pat@gmail.com'), true], // Google runs the mailbox
-    [u(['oauth'], ['google'], 'pat@googlemail.com'), true],
-    [u(['oauth'], ['google'], 'pat@company.sg'), false], // Google only vouched for it once
-    [u(['oauth'], ['apple'], 'x1y2@privaterelay.appleid.com'), true],
-    [u(['oauth'], ['apple'], 'pat@icloud.com'), false],
-    [u(['oauth'], ['email', 'google'], 'pat@gmail.com'), true],
-    [u(['token_refresh'], ['email'], 'pat@company.sg'), false],
-    [u([], [], 'pat@gmail.com'), false],
+  assertEquals(calls.members, [{ memberId: '33333333-3333-4333-8333-333333333333', email: 'pat@company.sg', proofAt: null }]);
+  const u = (amr: [string, number][], providers: string[], email: string, tokenEmail = email): AuthUser =>
+    ({ id: USER_A, email, emailConfirmed: true, tokenEmail, amr: amr.map(([method, timestamp]) => ({ method, timestamp })), providers });
+  const iso = (t: number) => new Date(t * 1000).toISOString();
+  const cases: [AuthUser, string | null][] = [
+    [u([['otp', T]], ['email'], 'pat@company.sg'), iso(T)], // emailed 6-digit code
+    [u([['magiclink', T]], ['email'], 'pat@company.sg'), iso(T)],
+    [u([['token_refresh', T + 50], ['otp', T]], ['email'], 'pat@company.sg'), iso(T)], // when the code was used, not the refresh
+    [u([['oauth', T]], ['google'], 'pat@gmail.com'), iso(T)], // Google runs the mailbox
+    [u([['oauth', T]], ['google'], 'pat@googlemail.com'), iso(T)],
+    [u([['oauth', T]], ['google'], 'pat@company.sg'), null], // Google only vouched for it once
+    [u([['oauth', T]], ['email', 'google'], 'pat@company.sg'), null], // linked to an email user: still not this session
+    [u([['oauth', T]], ['apple'], 'x1y2@privaterelay.appleid.com'), iso(T)],
+    [u([['oauth', T]], ['apple'], 'pat@icloud.com'), null],
+    [u([['otp', T]], ['email'], 'new@company.sg', 'old@company.sg'), null], // token from before the email changed
+    [u([['otp', T]], ['email'], 'pat@company.sg', 'PAT@Company.sg '), iso(T)],
+    [u([['token_refresh', T]], ['email'], 'pat@company.sg'), null],
+    [u([], [], 'pat@gmail.com'), null],
   ];
-  for (const [user, want] of cases) assertEquals(mailboxProven(user, user.email!), want, JSON.stringify(user));
+  for (const [user, want] of cases) assertEquals(mailboxProofAt(user, user.email!), want, JSON.stringify(user));
 });
 
 Deno.test('api: referral claims go to the database as the signed-in member', async () => {
@@ -335,7 +343,7 @@ Deno.test('api: referral claims go to the database as the signed-in member', asy
   const post = (body: string, token = 'token-a') =>
     handleLoyaltyRequest(new Request('https://x/loyalty/referral', { method: 'POST', body, headers: { Authorization: 'Bearer ' + token } }), cfg);
   assertEquals((await post('{"code":"abcd2345"}')).status, 200);
-  assertEquals(calls.claims, [[{ memberId: USER_A, email: 'pat@example.com', emailProven: true }, 'abcd2345']]);
+  assertEquals(calls.claims, [[{ memberId: USER_A, email: 'pat@example.com', proofAt: AT }, 'abcd2345']]);
   assertEquals((await post('{}')).status, 400);
   assertEquals((await post('not json')).status, 400);
   assertEquals((await post(JSON.stringify({ code: 'x'.repeat(2000) }))).status, 413);

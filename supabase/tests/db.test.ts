@@ -9,21 +9,38 @@ const wh = () => `wh-${Date.now()}-${seq++}`;
 // Customer n is the Supabase user uid(n) with the confirmed email mail(n).
 const uid = (n: number | string) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const mail = (n: number | string) => `c${n}@example.com`;
-const who = (n: number | string, emailProven = true) => ({ memberId: uid(n), email: mail(n), emailProven });
+const now = () => new Date().toISOString();
+/** Customer n signed in; proven: with an emailed code just now (the default), or not (Google on a company address). */
+const who = (n: number | string, proven = true, email = mail(n)) => ({ memberId: uid(n), email, proofAt: proven ? now() : null });
 /** Customer n exists in (stand-in) Supabase Auth with a confirmed email. */
 const authUser = (t: TestDb, n: number | string, email = mail(n)) =>
   t.sql`insert into auth.users (id, email, email_confirmed_at) values (${uid(n)}, ${email}, now()) on conflict do nothing`;
-/** Supabase Auth changes customer n's email (after the new address is confirmed). */
-const changeEmail = (t: TestDb, n: number | string, email: string) => t.sql`update auth.users set email = ${email} where id = ${uid(n)}`;
+/**
+ * Supabase Auth changes customer n's email: 'confirmed' is its own email
+ * change flow (email_change becomes email), 'direct' is any other update
+ * (identity promotion after unlinking, an admin edit).
+ */
+async function changeEmail(t: TestDb, n: number | string, email: string, how: 'confirmed' | 'direct' = 'confirmed') {
+  if (how === 'confirmed') {
+    await t.sql`update auth.users set email_change = ${email} where id = ${uid(n)}`;
+    await t.sql`update auth.users set email = email_change, email_change = '' where id = ${uid(n)}`;
+  } else {
+    await t.sql`update auth.users set email = ${email} where id = ${uid(n)}`;
+  }
+}
 /**
  * The customer opens the app signed in (creates the member, links waiting
- * orders). emailProven: they signed in with an emailed code, as by default.
+ * orders when the sign-in proves the mailbox).
  */
-async function signIn(t: TestDb, n: number | string, emailProven = true) {
+async function signIn(t: TestDb, n: number | string, proven = true) {
   await authUser(t, n);
-  return t.db.getMember(who(n, emailProven));
+  return t.db.getMember(who(n, proven));
 }
-const claim = (t: TestDb, n: number | string, code: string) => t.db.claimReferral(who(n), code);
+/** Customer n (signed in, as the app always is before a claim) enters a referral code. */
+async function claim(t: TestDb, n: number | string, code: string, proven = true) {
+  await signIn(t, n, proven);
+  return t.db.claimReferral(who(n, proven), code);
+}
 
 /** orders/paid for customer n's email, with the customer already signed up. */
 async function paid(t: TestDb, order: number | string, customer: number | string, cents: number, webhookId: string | null = wh()) {
@@ -67,7 +84,11 @@ async function paidRetrying(t: TestDb, order: number, customer: number, cents: n
   }
 }
 // deno-lint-ignore no-explicit-any
-const member = async (t: TestDb, c: number | string, emailProven = true) => (await signIn(t, c, emailProven)) as any;
+const member = async (t: TestDb, c: number | string, proven = true) => (await signIn(t, c, proven)) as any;
+/** What customer n sees when signed in (proven) with the address Auth now has. */
+// deno-lint-ignore no-explicit-any
+const memberAs = async (t: TestDb, n: number, email: string, proofAt: string | null = now()) =>
+  (await t.db.getMember({ memberId: uid(n), email, proofAt })) as any;
 const points = async (t: TestDb, c: number | string) => (await member(t, c)).points as number;
 
 /** Balance always equals the ledger sum, and balance_after runs in order. */
@@ -190,19 +211,23 @@ dbTest('a member who changes email keeps their orders and picks up the new email
   await paid(t, 801, 9, 2000);
   await order(t, 802, 'new9@example.com', 1000);
   await changeEmail(t, 9, 'NEW9@example.com');
-  const m = (await t.db.getMember({ memberId: uid(9), email: 'new9@example.com', emailProven: false })) as Record<string, any>;
-  assertEquals([m.email, m.ordersLinked, m.points], ['new9@example.com', true, 30]); // Auth confirmed the new address
+  const m = await memberAs(t, 9, 'new9@example.com');
+  assertEquals([m.email, m.ordersLinked, m.points], ['new9@example.com', true, 30]);
 });
 
-dbTest('without proof of the mailbox (Google on a company address) orders wait', async (t) => {
+dbTest('a sign-in that does not prove the mailbox sees nothing, even on a proven member', async (t) => {
   assertEquals((await order(t, 901, mail(11), 4000)).outcome, 'stored_until_sign_up');
-  const m = await member(t, 11, false);
-  assertEquals([m.email, m.ordersLinked, m.points, m.orders.length], [mail(11), false, 0, 0]);
+  const m = await member(t, 11, false); // Google on a company address
+  assertEquals([m.email, m.ordersLinked, m.points, m.orders.length, m.referralCode], [mail(11), false, 0, 0, null]);
   assertEquals((await order(t, 902, mail(11), 1000)).outcome, 'stored_until_sign_up');
-  const proven = await member(t, 11, true); // later signs in with an emailed code
+  const proven = await member(t, 11, true); // signs in with an emailed code
   assertEquals([proven.ordersLinked, proven.points, proven.orders.length], [true, 50, 2]);
-  assertEquals((await member(t, 11, false)).ordersLinked, true); // proof stays until the email changes
+  // Supabase links a later Google sign-in on the same address to this user:
+  // that session gets nothing, though orders keep reaching the member.
+  const google = await member(t, 11, false);
+  assertEquals([google.ordersLinked, google.points, google.transactions.length, google.referralCode], [false, 0, 0, null]);
   assertEquals((await order(t, 903, mail(11), 1000)).outcome, 'awarded');
+  assertEquals((await member(t, 11, true)).points, 60);
 });
 
 dbTest('an email change in Supabase Auth moves the binding at once', async (t) => {
@@ -214,24 +239,39 @@ dbTest('an email change in Supabase Auth moves the binding at once', async (t) =
   assertEquals((await order(t, 1102, mail(12), 3000)).outcome, 'stored_until_sign_up');
   assertEquals((await order(t, 1103, 'new12@example.com', 1000)).outcome, 'awarded');
   await authUser(t, 13, mail(12));
-  const newcomer = (await t.db.getMember({ memberId: uid(13), email: mail(12), emailProven: true })) as Record<string, any>;
+  const newcomer = await memberAs(t, 13, mail(12));
   assertEquals([newcomer.points, newcomer.orders.map((o: { orderId: string }) => o.orderId)], [30, ['1102']]);
-  assertEquals(await points(t, 12), 30); // keeps 1101 and earns 1103
+  assertEquals((await memberAs(t, 12, 'new12@example.com')).points, 30); // keeps 1101 and earns 1103
+});
+
+dbTest('an address Auth moved without a confirmation needs a sign-in after the move', async (t) => {
+  const before = new Date(Date.now() - 60_000).toISOString(); // an emailed code a minute ago
+  await authUser(t, 30);
+  await t.db.getMember({ memberId: uid(30), email: mail(30), proofAt: before });
+  await changeEmail(t, 30, 'promoted@example.com', 'direct'); // e.g. identity promotion after unlinking
+  const [row] = await t.sql`select email, email_proven_at, email_unproven_since is not null as moved from loyalty.members where member_id = ${uid(30)}`;
+  assertEquals(row, { email: 'promoted@example.com', email_proven_at: null, moved: true });
+  assertEquals((await order(t, 3001, 'promoted@example.com', 2000)).outcome, 'stored_until_sign_up');
+  const old = await memberAs(t, 30, 'promoted@example.com', before); // the session from before the move
+  assertEquals([old.ordersLinked, old.points], [false, 0]);
+  assertEquals((await t.db.claimReferral({ memberId: uid(30), email: 'promoted@example.com', proofAt: before }, 'ABCDEFGH')).outcome, 'email_not_proven');
+  const fresh = await memberAs(t, 30, 'promoted@example.com', new Date(Date.now() + 1000).toISOString());
+  assertEquals([fresh.ordersLinked, fresh.points], [true, 20]);
 });
 
 dbTest('a sign-in that read the old address cannot undo an email change', async (t) => {
   await signIn(t, 14);
   await changeEmail(t, 14, 'new14@example.com');
   // The API looked the user up just before the change and still says c14.
-  const m = (await t.db.getMember({ memberId: uid(14), email: mail(14), emailProven: true })) as Record<string, any>;
-  assertEquals([m.email, m.ordersLinked], ['new14@example.com', true]);
+  const m = await memberAs(t, 14, mail(14));
+  assertEquals([m.email, m.ordersLinked], ['new14@example.com', false]);
   assertEquals((await order(t, 1401, mail(14), 1000)).outcome, 'stored_until_sign_up');
   // Nor can a caller name an address Auth never gave them.
   await signIn(t, 15);
-  const other = (await t.db.getMember({ memberId: uid(15), email: 'new14@example.com', emailProven: true })) as Record<string, any>;
-  assertEquals(other.email, mail(15));
+  const other = await memberAs(t, 15, 'new14@example.com');
+  assertEquals([other.email, other.ordersLinked], [mail(15), false]);
   assertEquals((await order(t, 1402, 'new14@example.com', 1000)).outcome, 'awarded');
-  assertEquals(await points(t, 14), 10);
+  assertEquals((await memberAs(t, 14, 'new14@example.com')).points, 10);
 });
 
 dbTest('deleting a Supabase user releases their address', async (t) => {
@@ -241,8 +281,16 @@ dbTest('deleting a Supabase user releases their address', async (t) => {
   assertEquals(row, { email: null, email_proven_at: null });
   assertEquals((await order(t, 1602, mail(16), 1000)).outcome, 'stored_until_sign_up');
   await authUser(t, 17, mail(16));
-  const m = (await t.db.getMember({ memberId: uid(17), email: mail(16), emailProven: true })) as Record<string, any>;
-  assertEquals(m.points, 10);
+  assertEquals((await memberAs(t, 17, mail(16))).points, 10);
+});
+
+dbTest('a soft delete (obfuscated email) succeeds and releases the address', async (t) => {
+  await paid(t, 3101, 31, 2000);
+  // What auth.admin.deleteUser(id, true) writes: a hash instead of the email, and deleted_at.
+  await t.sql`update auth.users set email = 'a1b2c3d4e5', deleted_at = now() where id = ${uid(31)}`;
+  const [row] = await t.sql`select email, email_proven_at from loyalty.members where member_id = ${uid(31)}`;
+  assertEquals(row, { email: null, email_proven_at: null });
+  assertEquals((await order(t, 3102, mail(31), 1000)).outcome, 'stored_until_sign_up');
 });
 
 dbTest('Auth giving an address to someone releases any stale holder', async (t) => {
@@ -257,8 +305,20 @@ dbTest('Auth giving an address to someone releases any stale holder', async (t) 
     { id: uid(19), email: null, proven: false },
   ]);
   assertEquals((await order(t, 1801, 'shared@example.com', 1000)).outcome, 'awarded');
-  assertEquals(await points(t, 18), 10);
+  assertEquals((await memberAs(t, 18, 'shared@example.com')).points, 10);
 });
+
+/** Waits until another session is blocked on a lock, or `done` settles (then nobody waited). */
+async function lockWaitOrDone(t: TestDb, done: Promise<unknown>) {
+  let settled = false;
+  done.then(() => (settled = true), () => (settled = true));
+  for (let i = 0; i < 300 && !settled; i++) {
+    const [w] = await t.sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`;
+    if (w.n > 0) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
+}
 
 dbTest('the email trigger locks members in id order, like a referral claim', async (t) => {
   // Member 21 (lower id) takes over an address member 22 still holds. A
@@ -271,13 +331,8 @@ dbTest('the email trigger locks members in id order, like a referral claim', asy
   try {
     await claimer`begin`;
     await claimer`select 1 from loyalty.members where member_id = ${uid(21)} for update`;
-    change = changeEmail(t, 21, 'taken@example.com').execute().then(() => null, (err) => err);
-    for (let i = 0; ; i++) {
-      const [w] = await t.sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`;
-      if (w.n > 0) break;
-      assert(i < 200, 'the email change never waited for the claim');
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    change = t.sql`update auth.users set email = 'taken@example.com' where id = ${uid(21)}`.execute().then(() => null, (err) => err);
+    assert(await lockWaitOrDone(t, change), 'the email change never waited for the claim');
     // Deadlocks if the trigger took member 22 before 21.
     await claimer`select 1 from loyalty.members where member_id = ${uid(22)} for update`;
     await claimer`commit`;
@@ -288,6 +343,62 @@ dbTest('the email trigger locks members in id order, like a referral claim', asy
   assertEquals(await change, null);
   const [row] = await t.sql`select email from loyalty.members where member_id = ${uid(21)}`;
   assertEquals(row.email, 'taken@example.com');
+});
+
+dbTest('a first sign-in racing an email change ends on the new address (sign-in first)', async (t) => {
+  await authUser(t, 40);
+  const signin = await t.sql.reserve();
+  let change: Promise<unknown> = Promise.resolve(null);
+  try {
+    await signin`begin`;
+    // Creates member 40 bound to the old address, not yet committed.
+    await signin`select loyalty.get_member(${uid(40)}::uuid, ${mail(40)}, ${now()}::timestamptz)`;
+    await t.sql`update auth.users set email_change = 'moved40@example.com' where id = ${uid(40)}`;
+    change = t.sql`update auth.users set email = email_change, email_change = '' where id = ${uid(40)}`.execute()
+      .then(() => null, (err) => err);
+    await lockWaitOrDone(t, change);
+    await signin`commit`;
+  } finally {
+    await signin`rollback`.catch(() => {});
+    signin.release();
+  }
+  assertEquals(await change, null);
+  const [row] = await t.sql`select email, email_proven_at is not null as proven from loyalty.members where member_id = ${uid(40)}`;
+  assertEquals(row, { email: 'moved40@example.com', proven: true });
+  assertEquals((await order(t, 4001, mail(40), 1000)).outcome, 'stored_until_sign_up');
+});
+
+dbTest('a first sign-in racing an email change ends on the new address (Auth first)', async (t) => {
+  await authUser(t, 41);
+  const auth = await t.sql.reserve();
+  let signin: Promise<unknown> = Promise.resolve(null);
+  try {
+    await auth`begin`;
+    await auth`update auth.users set email_change = 'moved41@example.com' where id = ${uid(41)}`;
+    await auth`update auth.users set email = email_change, email_change = '' where id = ${uid(41)}`;
+    // The API read the old address just before; the change is not committed yet.
+    signin = t.db.getMember({ memberId: uid(41), email: mail(41), proofAt: now() }).then((r) => r, (err) => err);
+    await lockWaitOrDone(t, signin);
+    await auth`commit`;
+  } finally {
+    await auth`rollback`.catch(() => {});
+    auth.release();
+  }
+  // deno-lint-ignore no-explicit-any
+  const m = (await signin) as any;
+  assertEquals(m.ordersLinked, false);
+  const [row] = await t.sql`select email, email_proven_at from loyalty.members where member_id = ${uid(41)}`;
+  assertEquals(row.email_proven_at, null);
+  assert(row.email !== mail(41), 'the old address must not be bound');
+  assertEquals((await order(t, 4101, mail(41), 1000)).outcome, 'stored_until_sign_up');
+});
+
+dbTest('referral claims need a sign-in that proves the mailbox', async (t) => {
+  const code = await codeOf(t, 1);
+  await signIn(t, 42, false);
+  assertEquals(await claim(t, 42, code, false), { outcome: 'email_not_proven' });
+  await signIn(t, 42, true);
+  assertEquals(await claim(t, 42, code, true), { outcome: 'pending' });
 });
 
 // ------------------------------------------------------------------- refunds

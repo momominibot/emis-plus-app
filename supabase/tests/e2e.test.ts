@@ -14,9 +14,13 @@ const BIG_CUSTOMER = '115310627314723954';
 // Supabase users the stand-in Auth knows, by access token.
 const PAT = { id: '6f9619ff-8b86-4011-b42d-00c04fc964ff', email: 'pat@example.com' };
 const SAM = { id: '0b5e3a3c-7f1d-4c2e-9a77-2f3f6a1d9c10', email: 'sam@example.com' };
+const NOW = Math.floor(Date.now() / 1000) - 5; // signed in with a code a moment ago
 const USERS: Record<string, AuthUser> = {
-  'token-pat': { ...PAT, emailConfirmed: true, methods: ['otp'], providers: ['email'] },
-  'token-sam': { ...SAM, email: 'Sam@Example.com', emailConfirmed: true, methods: ['otp'], providers: ['email'] },
+  'token-pat': { ...PAT, emailConfirmed: true, tokenEmail: PAT.email, amr: [{ method: 'otp', timestamp: NOW }], providers: ['email'] },
+  'token-sam': {
+    ...SAM, email: 'Sam@Example.com', emailConfirmed: true, tokenEmail: 'Sam@Example.com',
+    amr: [{ method: 'otp', timestamp: NOW }], providers: ['email'],
+  },
 };
 
 async function sign(body: string): Promise<string> {

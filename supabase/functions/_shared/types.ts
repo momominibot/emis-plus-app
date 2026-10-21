@@ -34,14 +34,18 @@ export type ReferralOutcome =
   | 'self_referral'
   | 'already_claimed'
   | 'not_new_customer'
-  | 'mutual_referral';
+  | 'mutual_referral'
+  | 'email_not_proven';
 
 /** A signed-in Supabase user whose email Supabase Auth has confirmed. */
 export interface Member {
   memberId: string;
   email: string;
-  /** This sign-in proved they control the mailbox (emailed code, or an address the provider owns). */
-  emailProven: boolean;
+  /**
+   * When this sign-in proved control of the mailbox (an emailed code, or an
+   * address the provider itself runs), as an ISO time; null if it did not.
+   */
+  proofAt: string | null;
 }
 
 export interface LoyaltyDb {

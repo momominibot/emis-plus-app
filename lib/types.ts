@@ -51,14 +51,15 @@ export interface Membership {
   memberId: string;
   email: string;
   /**
-   * True once the member has proven they read this mailbox (an emailed code,
-   * or an address Google or Apple runs). Until then emis.asia orders wait.
+   * True when this sign-in has proven the mailbox (an emailed code, or an
+   * address Google or Apple runs). When false the server sends no points,
+   * orders or history (all zero or empty) and the app asks for a code.
    */
   ordersLinked: boolean;
   points: number;
   tier: MemberTier;
   totalSpentCents: number;
-  referralCode: string;
+  referralCode: string | null;
   referralsCompleted: number;
   referralsPending: number;
   referredStatus: 'pending' | 'completed' | 'reversed' | null;

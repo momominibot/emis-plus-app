@@ -7,19 +7,25 @@
 --
 -- Identity: a member is a Supabase Auth user (member_id = auth user id).
 -- Shopify orders are matched to members by email (lowercased, trimmed), but
--- only once the member has proven they control that mailbox
--- (email_proven_at): by signing in with an emailed code, or with an address
--- the identity provider itself owns (see the loyalty API). A provider's
--- "email verified" flag alone is not enough, because a Google account can
--- keep an address on another domain after that mailbox changes hands.
+-- only to a proven binding (email_proven_at): one set by a sign-in that
+-- proved control of the mailbox (an emailed code, or an address the
+-- identity provider itself runs; see the loyalty API), or by Auth's own
+-- confirmed email change. A provider's "email verified" flag alone is not
+-- enough, because a Google account can keep an address on another domain
+-- after that mailbox changes hands, and Supabase links such a Google
+-- sign-in to whoever holds the address now. So proof is also checked per
+-- session: a session that has not proven the mailbox sees no points,
+-- orders or history, and cannot claim a referral.
 -- members.email follows auth.users.email through a trigger, so an address a
 -- member gave up is released at once. Orders that arrive before their
 -- customer signs up (or proves the email) wait unassigned and are awarded
 -- the next time that customer opens the app. members.shopify_customer_id is
 -- kept so a later migration can link by Shopify customer ID instead.
 --
--- Lock order, everywhere: order advisory locks (ascending order id), then
--- member rows (member and referrer, ascending uuid), then everything else.
+-- Lock order, everywhere: the member's identity lock (lock_identity: sign-in,
+-- referral claims and the auth.users trigger), then order advisory locks
+-- (ascending order id), then member rows (member and referrer, ascending
+-- uuid), then everything else.
 --
 -- Rules enforced here, not in the app:
 --   * Points come only from paid orders (orders/paid webhook, HMAC checked
@@ -47,6 +53,7 @@ create table loyalty.members (
   member_id           uuid primary key,  -- Supabase auth.users.id
   email               text check (email is null or (email = lower(btrim(email)) and email like '%@%')),
   email_proven_at     timestamptz,       -- when the member last proved they control `email`
+  email_unproven_since timestamptz,      -- Auth moved the address without a confirmation; sign-ins before this prove nothing
   shopify_customer_id bigint check (shopify_customer_id > 0),
   referral_code       text not null unique
                       check (referral_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$'),
@@ -54,7 +61,8 @@ create table loyalty.members (
   total_spent_cents   bigint not null default 0 check (total_spent_cents >= 0),
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
-  check (email_proven_at is null or email is not null)
+  check (email_proven_at is null or email is not null),
+  check (email_unproven_since is null or (email_proven_at is null and email is not null))
 );
 -- Only a proven address is a binding orders can follow, and only one member
 -- can hold it. An unproven address is just what Auth last told us.
@@ -217,6 +225,24 @@ $$;
 create function loyalty.lock_order(p_order_id bigint) returns void
 language sql volatile set search_path = '' as $$
   select pg_catalog.pg_advisory_xact_lock(7731, pg_catalog.hashtext(p_order_id::text))
+$$;
+
+-- Serialises everything that reads or changes a member's email binding:
+-- sign-in (get_member), referral claims and the auth.users trigger. Taken
+-- first, before any other lock, so a member being created cannot miss an
+-- email change that Auth is making at the same moment.
+create function loyalty.lock_identity(p_member_id uuid) returns void
+language sql volatile set search_path = '' as $$
+  select pg_catalog.pg_advisory_xact_lock(7732, pg_catalog.hashtext(p_member_id::text))
+$$;
+
+-- Whether this sign-in proves the member's mailbox now: it carries proof
+-- (p_proof_at, from the loyalty API) made after any unconfirmed move of the
+-- address by Auth.
+create function loyalty.session_proven(m loyalty.members, p_proof_at timestamptz) returns boolean
+language sql stable set search_path = '' as $$
+  select p_proof_at is not null
+     and (m.email_unproven_since is null or p_proof_at >= pg_catalog.date_trunc('second', m.email_unproven_since))
 $$;
 
 -- Creates the member on first use, with no email yet: the binding is set
@@ -619,19 +645,27 @@ begin
 end
 $$;
 
-create function loyalty.claim_referral(p_member_id uuid, p_email text, p_code text)
+create function loyalty.claim_referral(p_member_id uuid, p_email text, p_code text, p_proof_at timestamptz default null)
 returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   v_code text := upper(btrim(coalesce(p_code, '')));
   v_email text := loyalty.normalize_email(p_email);
   v_referrer uuid;
+  m loyalty.members;
 begin
   if v_code !~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$' then
     return jsonb_build_object('outcome', 'invalid_code');
   end if;
   if v_email is null or v_email not like '%@%' then raise exception 'invalid email'; end if;
+  perform loyalty.lock_identity(p_member_id);
   perform loyalty.ensure_member_row(p_member_id);
+  -- Only a member whose sign-in proves the mailbox can claim (the binding
+  -- cannot move while we hold the identity lock).
+  select * into strict m from loyalty.members where member_id = p_member_id;
+  if not (loyalty.session_proven(m, p_proof_at) and m.email_proven_at is not null and m.email = v_email) then
+    return jsonb_build_object('outcome', 'email_not_proven');
+  end if;
   select member_id into v_referrer from loyalty.members where referral_code = v_code;
   if not found then
     return jsonb_build_object('outcome', 'invalid_code');
@@ -661,11 +695,13 @@ end
 $$;
 
 -- Everything the app shows: balance, tier, referral, history and the orders
--- matched to the member. Creates the member on first use, keeps the email
--- binding in step with Supabase Auth, records proof of mailbox control
--- (p_email_proven, decided by the loyalty API from how the user signed in)
--- and gives a proven member any orders that were waiting for their email.
-create function loyalty.get_member(p_member_id uuid, p_email text, p_email_proven boolean default false) returns jsonb
+-- matched to the member. Creates the member on first use and binds the email
+-- Supabase Auth has for them. p_proof_at is when this sign-in proved the
+-- mailbox (decided by the loyalty API from how the user signed in), or null.
+-- A proving sign-in makes the binding proven and collects any orders that
+-- were waiting for the address. A sign-in that does not prove the mailbox
+-- gets only what it needs to ask for a code: no points, orders or history.
+create function loyalty.get_member(p_member_id uuid, p_email text, p_proof_at timestamptz default null) returns jsonb
 language plpgsql volatile set search_path = '' as $$
 declare
   v_email text := loyalty.normalize_email(p_email);
@@ -673,11 +709,13 @@ declare
   v_ids bigint[];
   v_id bigint;
   v_linked integer := 0;
+  v_proven boolean;
 begin
   if v_email is null or v_email not like '%@%' then raise exception 'invalid email'; end if;
+  perform loyalty.lock_identity(p_member_id);
   perform loyalty.ensure_member_row(p_member_id);
 
-  -- Lock order: the waiting orders' locks, then the member (and referrer).
+  -- Lock order: identity, the waiting orders' locks, then the member (and referrer).
   select array_agg(order_id order by order_id) into v_ids
     from loyalty.orders where customer_email = v_email and member_id is null;
   if v_ids is not null then
@@ -688,26 +726,40 @@ begin
   perform loyalty.lock_member(p_member_id);
 
   select * into strict m from loyalty.members where member_id = p_member_id;
-  -- Only rebind if Auth still has this address for the user: the API read it
-  -- a moment ago, and an email change since then has already been applied
-  -- by the auth.users trigger, which must not be undone.
-  if (m.email is distinct from v_email or (p_email_proven and m.email_proven_at is null))
-     and loyalty.auth_email_is(p_member_id, v_email) then
-    if p_email_proven and exists (select 1 from loyalty.members
-                                   where email = v_email and email_proven_at is not null
-                                     and member_id <> p_member_id) then
-      raise exception 'email belongs to another member';
+  -- Auth is the source of truth. The API read the email a moment ago; with
+  -- the identity lock held, the trigger has applied any change since, so
+  -- only act if Auth still has this address for the user.
+  if loyalty.auth_email_is(p_member_id, v_email) then
+    v_proven := loyalty.session_proven(m, p_proof_at);
+    if m.email is distinct from v_email or (v_proven and m.email_proven_at is null) then
+      if v_proven and exists (select 1 from loyalty.members
+                               where email = v_email and email_proven_at is not null
+                                 and member_id <> p_member_id) then
+        raise exception 'email belongs to another member';
+      end if;
+      update loyalty.members
+         set email = v_email,
+             email_proven_at = case when v_proven then now()
+                                    when m.email = v_email then m.email_proven_at end,
+             email_unproven_since = case when v_proven then null
+                                         when m.email = v_email then m.email_unproven_since end,
+             updated_at = now()
+       where member_id = p_member_id;
     end if;
-    update loyalty.members
-       set email = v_email,
-           email_proven_at = case when p_email_proven then now()
-                                  when m.email = v_email then m.email_proven_at end,
-           updated_at = now()
-     where member_id = p_member_id;
+  else
+    v_proven := false;
   end if;
   select * into strict m from loyalty.members where member_id = p_member_id;
 
-  if m.email_proven_at is not null and v_ids is not null then
+  if not v_proven or m.email_proven_at is null then
+    return jsonb_build_object(
+      'memberId', m.member_id, 'email', coalesce(m.email, v_email), 'ordersLinked', false,
+      'points', 0, 'tier', 'silver', 'totalSpentCents', 0, 'referralCode', null,
+      'referralsCompleted', 0, 'referralsPending', 0, 'referredStatus', null,
+      'transactions', '[]'::jsonb, 'orders', '[]'::jsonb);
+  end if;
+
+  if v_ids is not null then
     for v_id in
       select order_id from loyalty.orders
        where order_id = any (v_ids) and member_id is null and customer_email = m.email
@@ -726,7 +778,7 @@ begin
   return jsonb_build_object(
     'memberId', m.member_id,
     'email', m.email,
-    'ordersLinked', m.email_proven_at is not null,
+    'ordersLinked', true,
     'points', m.points,
     'tier', loyalty.tier(m.total_spent_cents),
     'totalSpentCents', m.total_spent_cents,
@@ -752,11 +804,6 @@ begin
 end
 $$;
 
--- Keeps members.email in step with Supabase Auth. Supabase changes
--- auth.users.email only after the new address is confirmed, so the new
--- binding counts as proven. A deleted user releases their address. Auth is
--- the source of truth: any other member still holding the new address
--- (which can only be stale) lets it go.
 -- Whether Supabase Auth currently has this confirmed address for the user.
 -- Outside Supabase (no auth.users) the loyalty API's word is all there is.
 create function loyalty.auth_email_is(p_member_id uuid, p_email text) returns boolean
@@ -768,12 +815,24 @@ begin
     return true;
   end if;
   execute 'select exists (select 1 from auth.users where id = $1 and email_confirmed_at is not null '
-       || 'and loyalty.normalize_email(email) = $2)'
+       || 'and deleted_at is null and loyalty.normalize_email(email) = $2)'
      into v_ok using p_member_id, p_email;
   return v_ok;
 end
 $$;
 
+-- Keeps members.email in step with Supabase Auth, holding the member's
+-- identity lock so it cannot cross a sign-in that is creating the member.
+--   * Auth's own confirmed email change (the pending email_change becomes
+--     email, so the new address answered its email): the binding moves and
+--     stays proven.
+--   * Any other change (identity promotion after unlinking, an admin edit):
+--     the binding moves unproven, and only a sign-in after this moment can
+--     prove it again.
+--   * A deleted or soft-deleted user (Auth swaps in an obfuscated address):
+--     the address is released.
+-- Auth is the source of truth: any other member still holding the new
+-- address (which can only be stale) lets it go.
 do $$
 begin
   if pg_catalog.to_regclass('auth.users') is null then
@@ -783,34 +842,46 @@ begin
     create function loyalty.sync_auth_email() returns trigger
     language plpgsql security definer set search_path = '' as $body$
     declare
+      v_id uuid := coalesce(new.id, old.id);
       v_email text;
+      v_confirmed boolean;
     begin
-      if tg_op = 'DELETE' then
-        update loyalty.members set email = null, email_proven_at = null, updated_at = now()
-         where member_id = old.id;
-        return old;
-      end if;
-      if new.email is distinct from old.email then
-        v_email := loyalty.normalize_email(new.email);
-        -- Member rows in id order, like every other path.
-        perform 1 from loyalty.members
-          where member_id = new.id or (v_email is not null and email = v_email)
-          order by member_id for update;
-        if v_email is not null then
-          update loyalty.members set email = null, email_proven_at = null, updated_at = now()
-           where email = v_email and member_id <> new.id;
-        end if;
+      perform loyalty.lock_identity(v_id);
+      if tg_op = 'DELETE' or new.deleted_at is not null then
         update loyalty.members
-           set email = v_email,
-               email_proven_at = case when v_email is not null and new.email_confirmed_at is not null then now() end,
-               updated_at = now()
-         where member_id = new.id;
+           set email = null, email_proven_at = null, email_unproven_since = null, updated_at = now()
+         where member_id = v_id and email is not null;
+        return null;
       end if;
-      return new;
+      if new.email is not distinct from old.email then
+        return null;
+      end if;
+      v_email := loyalty.normalize_email(new.email);
+      if v_email not like '%@%' then
+        v_email := null;
+      end if;
+      v_confirmed := coalesce(v_email is not null and new.email_confirmed_at is not null
+                              and loyalty.normalize_email(old.email_change) = v_email, false);
+      -- Member rows in id order, like every other path.
+      perform 1 from loyalty.members
+        where member_id = v_id or (v_email is not null and email = v_email)
+        order by member_id for update;
+      if v_email is not null then
+        update loyalty.members
+           set email = null, email_proven_at = null, email_unproven_since = null, updated_at = now()
+         where email = v_email and member_id <> v_id;
+      end if;
+      update loyalty.members
+         set email = v_email,
+             email_proven_at = case when v_confirmed then now() end,
+             email_unproven_since = case when v_email is not null and not v_confirmed then now() end,
+             updated_at = now()
+       where member_id = v_id;
+      return null;
     end
     $body$
   $f$;
-  execute 'create trigger loyalty_sync_email after update of email or delete on auth.users '
+  execute 'create trigger loyalty_sync_email after update of email, deleted_at or delete on auth.users '
        || 'for each row execute function loyalty.sync_auth_email()';
 end
 $$;
