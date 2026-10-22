@@ -48,10 +48,25 @@ const SKU_BRACKET = /\s*\(\s*SKUs?\b[^)]*\)/gi;
 const MONEY_BRACKET = /\s*\([^)]*(?:(?:S\$|SGD|US\$|\$)\s?\d|\d\s?SGD\b)[^)]*\)/gi;
 const SKU_CODE = /\bSKUs?\b[\s:#]*[A-Z0-9][A-Z0-9\-]{2,}/;
 
+// Drop the comma clause that carries the price, not the whole sentence:
+// "...plus the Roll-On, together at S$45.00." keeps "...plus the Roll-On."
+function dropPriceClauses(sentence: string): string {
+  if (!PRICE_TEXT.test(sentence)) return sentence;
+  const end = /[.!?]$/.test(sentence) ? sentence.slice(-1) : '';
+  const body = end ? sentence.slice(0, -1) : sentence;
+  const clauses = body.split(/,\s+/);
+  if (PRICE_TEXT.test(clauses[0])) return '';
+  const kept = clauses.filter(c => !PRICE_TEXT.test(c));
+  return kept.join(', ').replace(/\s+(?:at|for|from|only)$/i, '') + end;
+}
+
 function scrub(text: string): string {
   const t = text.replace(SKU_BRACKET, '').replace(MONEY_BRACKET, '');
   // Split into sentences at . ! ? followed by a space (so "S$4.90" stays whole).
-  const kept = t.split(/(?<=[.!?])\s+/).filter(sn => !SKU_CODE.test(sn) && !PRICE_TEXT.test(sn));
+  const kept = t.split(/(?<=[.!?])\s+/)
+    .filter(sn => !SKU_CODE.test(sn))
+    .map(dropPriceClauses)
+    .filter(Boolean);
   return kept.join(' ').replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -159,8 +174,14 @@ export function parseDescription(html: string | null | undefined): DescBlock[] {
     if (ph) { out.push(...pieces[Number(ph[1])]); continue; }
     const heading = raw.includes('@@H@@');
     const listItem = raw.includes('@@L@@');
-    const text = scrub(inlineText(raw.replace(/@@[HL]@@/g, '')));
-    if (!text || isInternalLine(text)) continue;
+    const original = inlineText(raw.replace(/@@[HL]@@/g, ''));
+    const text = scrub(original);
+    if (!text || isInternalLine(text)) {
+      // The removed line was an answer: drop the question it answered.
+      const last = out[out.length - 1];
+      if (original && last && (last.type === 'para' || last.type === 'heading') && /\?$/.test(last.text)) out.pop();
+      continue;
+    }
     if (heading) out.push({ type: 'heading', text });
     else if (listItem || BULLET_MARK.test(text)) out.push({ type: 'bullet', text: text.replace(BULLET_MARK, '') });
     else out.push({ type: 'para', text });

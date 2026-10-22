@@ -12,7 +12,13 @@
 
 **Verify against reality.** Real Shopify data on every screen; screenshots in light mode (web is light-only by Expo's template; dark mode verified by calculation, not by screenshot).
 
-Open after this loop: store descriptions (owner), analytics (owner), 5 user sessions (owner).
+**Verification round 1 (Codex):** 8 of 9 fixed; two-column header tables, multi-paragraph summaries and headerless 3-column tables still wrong. Fixed.
+
+**Reality sweep:** `tests/catalogueSweep.mjs` parsed all 1,091 published products. Found 19 leaks (internal codes inside prose and values, row labels in header tables) and 4 products losing over a third of their text (whole paragraphs dropped for one price). Fixed with bracket-, sentence- and clause-level removal and dropping questions whose only answer was a price. Final: 0 leaks, 0 empty pages, 0 large losses; 36 parser tests.
+
+**Verification round 2 (Codex):** ended without a verdict (no output, no usage-limit error). Not retried under the no-retry rule. **Owed:** one exhaustive Codex sweep of `git diff 19804fa..HEAD`.
+
+Open after this loop: store descriptions (owner), analytics (owner), 5 user sessions (owner), the owed review.
 
 ## How to run a loop
 1. `scripts/build-web.sh` (export, noindex, fallback, contrast gate)

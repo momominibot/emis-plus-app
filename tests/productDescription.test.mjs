@@ -81,3 +81,8 @@ ok(txt(t('<p>Stone Needle Mattress. SKU: MS-TL-0004. SGD 1,099. Full-body mattre
 ok(txt(t('<li>Herbal Ointment 5 g: massage balm for tired shoulders (worth S$14.90)</li>')) === 'Herbal Ointment 5 g: massage balm for tired shoulders', 'price bracket removed from a list item');
 ok(txt(t('<p>Save S$4.90 versus buying separately (S$45.00 vs S$49.90). Cabin friendly.</p>')) === 'Cabin friendly.', 'sentence with a decimal price removed whole');
 console.log(`productDescription: ${pass} checks passed after sentence-level price removal`);
+
+// 8. Clause-level price removal and orphaned questions (Dr Wang bundle, 22 Oct 2026).
+ok(txt(t('<p>The Travel Pack keeps the tradition in your carry-on: two ointments plus the Roll-On, together at S$45.00 (component value S$49.90, save S$4.90). Every piece is cabin-size.</p>')) === 'The Travel Pack keeps the tradition in your carry-on: two ointments plus the Roll-On. Every piece is cabin-size.', 'price clause removed, sentence kept');
+ok(txt(t('<p>Is it cabin-friendly?</p><p>Yes, under 100 ml.</p><p>How much do I save?</p><p>S$4.90 versus buying separately.</p><p>Where can I buy it?</p><p>From emis.asia.</p>')) === 'Is it cabin-friendly? | Yes, under 100 ml. | Where can I buy it? | From emis.asia.', 'question whose answer was a price is dropped');
+console.log(`productDescription: ${pass} checks passed after clause-level removal`);
