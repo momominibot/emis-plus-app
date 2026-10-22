@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMIS+ Mobile Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    padding: 20px;
+  }
+  .label {
+    color: #888;
+    font-size: 13px;
+    margin-bottom: 16px;
+    letter-spacing: 0.5px;
+  }
+  .phone {
+    width: 390px;
+    height: 844px;
+    background: #000;
+    border-radius: 50px;
+    padding: 12px;
+    box-shadow: 0 0 0 2px #333, 0 30px 60px rgba(0,0,0,0.5);
+    position: relative;
+  }
+  .phone::before {
+    content: '';
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 32px;
+    background: #000;
+    border-radius: 0 0 20px 20px;
+    z-index: 10;
+  }
+  .screen {
+    width: 100%;
+    height: 100%;
+    background: #FAF8F5;
+    border-radius: 40px;
+    overflow: hidden;
+    position: relative;
+  }
+  .screen iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    border-radius: 40px;
+  }
+  .home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 134px;
+    height: 5px;
+    background: #000;
+    border-radius: 3px;
+    z-index: 10;
+    opacity: 0.3;
+  }
+  .hint {
+    color: #666;
+    font-size: 12px;
+    margin-top: 16px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <div class="label">EMIS+ — iPhone 14 Preview (390 × 844)</div>
+  <div class="phone">
+    <div class="screen">
+      <iframe src="./index.html" title="EMIS+ App"></iframe>
+    </div>
+    <div class="home-indicator"></div>
+  </div>
+  <div class="hint">This is how the app will look on a mobile phone. Scroll inside the phone to navigate.</div>
+</body>
+</html>
