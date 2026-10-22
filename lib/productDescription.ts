@@ -41,8 +41,24 @@ function inlineText(html: string): string {
   return decode(html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
+// Internal codes and written prices inside customer prose: "(SKU S27)",
+// "SKUs SG-CON-1061 / SG-CON-1062.", "(worth S$14.90)", "SGD 1,099.".
+// Remove just that bracket or sentence and keep the rest of the paragraph.
+const SKU_BRACKET = /\s*\(\s*SKUs?\b[^)]*\)/gi;
+const MONEY_BRACKET = /\s*\([^)]*(?:(?:S\$|SGD|US\$|\$)\s?\d|\d\s?SGD\b)[^)]*\)/gi;
+const SKU_CODE = /\bSKUs?\b[\s:#]*[A-Z0-9][A-Z0-9\-]{2,}/;
+
+function scrub(text: string): string {
+  const t = text.replace(SKU_BRACKET, '').replace(MONEY_BRACKET, '');
+  // Split into sentences at . ! ? followed by a space (so "S$4.90" stays whole).
+  const kept = t.split(/(?<=[.!?])\s+/).filter(sn => !SKU_CODE.test(sn) && !PRICE_TEXT.test(sn));
+  return kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+}
+
 function isInternalLine(text: string): boolean {
   if (EDITING_NOTE.test(text)) return true;
+  // A short line that is only an internal or price label ("Store price (SGD)", "Variant REFs / SKUs").
+  if (text.length <= 40 && (INTERNAL_LABEL.test(text) || /^(?:store\s*|retail\s*|unit\s*)?price\b/i.test(text))) return true;
   // "Label: value" lines whose label is internal, or any written price.
   const m = text.match(/^([^:]{1,40}):\s*(.*)$/);
   if (m && (INTERNAL_LABEL.test(m[1]) || PRICE_LABEL.test(m[1]))) return true;
@@ -52,40 +68,57 @@ function isInternalLine(text: string): boolean {
 // --- tables -----------------------------------------------------------------
 
 function tableBlocks(tableHtml: string): DescBlock[] {
-  const rows = [...tableHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => ({
-    header: /<th[\s>]/i.test(r[1]) && !/<td[\s>]/i.test(r[1]),
-    cells: [...r[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(c => inlineText(c[1])),
-  })).filter(r => r.cells.some(Boolean));
+  const theadHtml = (tableHtml.match(/<thead[^>]*>([\s\S]*?)<\/thead>/i) || [])[1] || '';
+  const toRow = (html: string, inThead: boolean) => ({
+    header: inThead || (/<th[\s>]/i.test(html) && !/<td[\s>]/i.test(html)),
+    cells: [...html.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(c => scrub(inlineText(c[1]))),
+  });
+  const headRows = [...theadHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => toRow(r[1], true));
+  const bodyHtml = theadHtml ? tableHtml.replace(/<thead[\s\S]*?<\/thead>/i, '') : tableHtml;
+  const rows = [...headRows, ...[...bodyHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map(r => toRow(r[1], false))]
+    .filter(r => r.cells.some(Boolean));
   if (!rows.length) return [];
   const out: DescBlock[] = [];
-  // A header row: explicit <th>, or a first row of 3+ short label-like cells over rows of the same width.
   const first = rows[0];
-  const implicitHeader = first.cells.length >= 3 && rows.length > 1
-    && rows.slice(1).every(r => r.cells.length === first.cells.length)
-    && first.cells.every(c => c && c.length < 40 && !/\d{2,}/.test(c));
-  const headerRow = first.header || implicitHeader ? first : null;
-  if (headerRow) {
-    // Column table: drop internal or price columns entirely, then one spec per row.
-    const keep = headerRow.cells.map(h => !INTERNAL_LABEL.test(h) && !PRICE_LABEL.test(h));
-    const heads = headerRow.cells;
+  // A header row only when the HTML marks it (<thead>, <th>-only row), or when a
+  // first-row cell names a column we must remove (internal field or price) and
+  // carries no figures itself. Never guess headers from ordinary data rows.
+  // In a two-column key/value table labels sit in the left column, so only a
+  // removed label in a value position (or in a 3+ column row) marks a header.
+  const namesRemovedColumn = rows.length > 1 && first.cells.length >= 2
+    && first.cells.every(c => !c || !/\d/.test(c))
+    && first.cells.some((c, i) => c && (first.cells.length >= 3 || i >= 1) && (INTERNAL_LABEL.test(c) || PRICE_LABEL.test(c)));
+  if (first.header || namesRemovedColumn) {
+    const heads = first.cells;
+    const keep = heads.map(h => !INTERNAL_LABEL.test(h) && !PRICE_LABEL.test(h));
     for (const r of rows.slice(1)) {
-      const cols = r.cells.map((c, i) => ({ h: heads[i] || '', c, keep: keep[i] !== false })).filter(x => x.keep && x.c && !isInternalLine(x.c));
+      if (r.header) continue;
+      // The row's own label (first cell) names an internal field or a price: drop the whole row.
+      const label = r.cells[0] || '';
+      if (label && (INTERNAL_LABEL.test(label) || PRICE_LABEL.test(label))) continue;
+      const cols = r.cells.map((c, i) => ({ h: heads[i] || '', c, keep: keep[i] !== false }))
+        .filter(x => x.keep && x.c && !isInternalLine(x.c));
       if (!cols.length) continue;
-      const [first, ...rest] = cols;
+      const [lead, ...rest] = cols;
+      if (INTERNAL_LABEL.test(lead.c) || PRICE_LABEL.test(lead.c)) continue;
       const value = rest.map(x => (x.h ? `${x.h}: ${x.c}` : x.c)).join(' · ');
-      out.push(value ? { type: 'spec', key: first.c, value } : { type: 'para', text: first.c });
+      const key = lead.h && lead.h !== lead.c && cols.length === 1 ? lead.h : lead.c;
+      if (value) out.push({ type: 'spec', key, value });
+      else out.push(key === lead.c ? { type: 'para', text: lead.c } : { type: 'spec', key, value: lead.c });
     }
     return out;
   }
   for (const r of rows) {
-    const [k, ...vs] = r.cells;
-    const v = vs.filter(Boolean).join(' ');
-    if (k && v) {
-      if (INTERNAL_LABEL.test(k) || PRICE_LABEL.test(k) || isInternalLine(v)) continue;
+    const cells = r.cells.filter(Boolean);
+    if (cells.length === 2) {
+      // Key / value row.
+      const [k, v] = cells;
+      if (INTERNAL_LABEL.test(k) || PRICE_LABEL.test(k) || isInternalLine(v) || isInternalLine(k)) continue;
       out.push({ type: 'spec', key: k, value: v });
-    } else if (k || v) {
-      const t = k || v;
-      if (!isInternalLine(t)) out.push({ type: 'para', text: t });
+    } else {
+      // One cell, or a headerless multi-column row: keep it as written.
+      const kept = cells.filter(c => !isInternalLine(c));
+      if (kept.length) out.push({ type: 'para', text: kept.join(' · ') });
     }
   }
   return out;
@@ -101,8 +134,13 @@ export function parseDescription(html: string | null | undefined): DescBlock[] {
   const pieces: DescBlock[][] = [];
   const hold = (blocks: DescBlock[]) => { pieces.push(blocks); return `\n@@P${pieces.length - 1}@@\n`; };
   src = src.replace(/<div[^>]*id="ai-summary"[^>]*>([\s\S]*?)<\/div>/gi, (_, inner) => {
-    const text = inlineText(inner).replace(/^clinical summary:\s*/i, '');
-    return hold(text && !isInternalLine(text) ? [{ type: 'summary', text }] : []);
+    // Filter line by line so a safety sentence survives next to a removed price.
+    const lines = inner
+      .replace(/<br\s*\/?>|<\/(p|li|div)>/gi, '\n')
+      .split('\n')
+      .map((l: string) => scrub(inlineText(l).replace(/^clinical summary:\s*/i, '')))
+      .filter((l: string) => l && !isInternalLine(l));
+    return hold(lines.length ? [{ type: 'summary', text: lines.join(' ') }] : []);
   });
   src = src.replace(/<table[\s\S]*?<\/table>/gi, t => hold(tableBlocks(t)));
 
@@ -121,7 +159,7 @@ export function parseDescription(html: string | null | undefined): DescBlock[] {
     if (ph) { out.push(...pieces[Number(ph[1])]); continue; }
     const heading = raw.includes('@@H@@');
     const listItem = raw.includes('@@L@@');
-    const text = inlineText(raw.replace(/@@[HL]@@/g, ''));
+    const text = scrub(inlineText(raw.replace(/@@[HL]@@/g, '')));
     if (!text || isInternalLine(text)) continue;
     if (heading) out.push({ type: 'heading', text });
     else if (listItem || BULLET_MARK.test(text)) out.push({ type: 'bullet', text: text.replace(BULLET_MARK, '') });

@@ -53,3 +53,31 @@ ok(t('<p>SKU: 423290</p><p>Store price: S$36</p><p>Price: S$12</p><p>Use daily.<
 ok(t('<p>Offered at an affordable price for families.</p>').length === 1, 'the word price alone does not drop text');
 ok(t('<h2>Pricing</h2><p>Bundle of 3 for S$90.</p><h2>Use</h2><p>Spray.</p>').map(b => b.text).join('|') === 'Use|Spray.', 'heading over a dropped price line goes too');
 console.log(`productDescription: ${pass} checks passed in total`);
+
+// 5. Cases from the Codex verification round (22 Oct 2026).
+const thead2 = txt(t('<table><thead><tr><td>Size</td><td>Store price (SGD)</td></tr></thead><tbody><tr><td>150 ml</td><td>18.90</td></tr></tbody></table>'));
+ok(!/18\.90|Store price/.test(thead2) && /150 ml/.test(thead2), 'two-column thead with a price column: price gone, size kept');
+const td2 = txt(t('<table><tr><td>Size</td><td>Store price (SGD)</td></tr><tr><td>150 ml</td><td>18.90</td></tr></table>'));
+ok(!/18\.90|Store price/.test(td2) && /150 ml/.test(td2), 'two-column td header naming a price column: price gone');
+const sum = t('<div id="ai-summary"><p><strong>Clinical Summary:</strong> Use on intact skin.</p><p>Store price: S$12.</p></div>');
+ok(sum.length === 1 && sum[0].type === 'summary' && sum[0].text === 'Use on intact skin.', 'safety line in summary survives next to a removed price');
+const headerless = t('<table><tr><td>Small</td><td>White</td><td>Single pack</td></tr><tr><td>Large</td><td>Blue</td><td>Two packs</td></tr></table>');
+ok(headerless.length === 2 && headerless[0].text === 'Small · White · Single pack' && headerless[1].text === 'Large · Blue · Two packs', 'headerless 3-column rows kept as written, no invented pairing');
+const rowHeaders = t('<table><tr><th>Size</th><td>150 ml</td></tr><tr><th>Brand</th><td>Convatec</td></tr></table>');
+ok(rowHeaders.length === 2 && rowHeaders[0].type === 'spec' && rowHeaders[0].key === 'Size', 'row-header (th + td) tables stay key/value');
+const thHeader = txt(t('<table><tr><th>Size</th><th>Pieces</th></tr><tr><td>Small</td><td>10</td></tr></table>'));
+ok(/Small/.test(thHeader) && /Pieces: 10/.test(thHeader), 'two-column th header keeps its labels');
+console.log(`productDescription: ${pass} checks passed after verification fixes`);
+
+// 6. Catalogue sweep findings (22 Oct 2026).
+ok(txt(t('<table><tr><th>Item</th><th>Specification</th></tr><tr><td>SKU (EMIS)</td><td>23248313</td></tr><tr><td>Size</td><td>12 x 20 cm</td></tr></table>')) === 'Size=Specification: 12 x 20 cm', 'internal row label dropped in a header table');
+ok(txt(t('<p>Silicone-based remover. SKUs SG-CON-1061-NSA / SG-CON-1061-NSA-2. Listed indications: removal of dressings.</p>')) === 'Silicone-based remover. Listed indications: removal of dressings.', 'SKU sentence removed, rest kept');
+ok(txt(t('<table><tr><td>Product Code</td><td>Epidermal Repair (SKU S27)</td></tr></table>')) === 'Product Code=Epidermal Repair', 'SKU bracket removed from a value');
+ok(txt(t('<p>Pouch-only SKUs. Coupling diameter must match the baseplate.</p>')).includes('Coupling diameter'), 'prose that only mentions SKUs keeps its sentences');
+console.log(`productDescription: ${pass} checks passed after the catalogue sweep`);
+
+// 7. Price sentences and brackets go; the rest of the paragraph stays.
+ok(txt(t('<p>Stone Needle Mattress. SKU: MS-TL-0004. SGD 1,099. Full-body mattress made with bian stone.</p>')) === 'Stone Needle Mattress. Full-body mattress made with bian stone.', 'price and SKU sentences removed, description kept');
+ok(txt(t('<li>Herbal Ointment 5 g: massage balm for tired shoulders (worth S$14.90)</li>')) === 'Herbal Ointment 5 g: massage balm for tired shoulders', 'price bracket removed from a list item');
+ok(txt(t('<p>Save S$4.90 versus buying separately (S$45.00 vs S$49.90). Cabin friendly.</p>')) === 'Cabin friendly.', 'sentence with a decimal price removed whole');
+console.log(`productDescription: ${pass} checks passed after sentence-level price removal`);
