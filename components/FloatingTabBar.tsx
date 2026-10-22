@@ -1,6 +1,7 @@
-// Floating bottom bar: a white pill that sits above the content with a soft
-// shadow. The active tab becomes a green capsule with its label; the others
-// show icon only. Screens leave TAB_BAR_SPACE of padding at the bottom.
+// Floating bottom bar: a white pill above the content with a soft shadow.
+// Every tab shows its icon and label (easier for older shoppers than icons
+// alone); the active tab sits in a tinted capsule with the label in green.
+// Screens leave TAB_BAR_SPACE of padding at the bottom.
 
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +9,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 
-export const TAB_BAR_SPACE = 104;
+export const TAB_BAR_SPACE = 124;
 
 // Minimal shape of what expo-router's Tabs hands a custom tabBar.
 type Route = { key: string; name: string };
@@ -49,10 +50,12 @@ export default function FloatingTabBar({ state, descriptors, navigation }: BarPr
               accessibilityState={focused ? { selected: true } : {}}
               accessibilityLabel={options.tabBarAccessibilityLabel || label}
               onPress={onPress}
-              style={[styles.item, focused && { backgroundColor: colors.primary, paddingHorizontal: 16 }]}
+              style={styles.item}
             >
-              <Ionicons name={(focused ? on : off) as any} size={22} color={focused ? '#fff' : colors.textTertiary} />
-              {focused ? <Text style={styles.label}>{label}</Text> : null}
+              <View style={[styles.capsule, focused && { backgroundColor: colors.primaryLight }]}>
+                <Ionicons name={(focused ? on : off) as any} size={22} color={focused ? colors.primary : colors.textTertiary} />
+              </View>
+              <Text style={[styles.label, { color: focused ? colors.primaryInk : colors.textTertiary, fontWeight: focused ? '700' : '600' }]}>{label}</Text>
             </TouchableOpacity>
           );
         })}
@@ -62,12 +65,13 @@ export default function FloatingTabBar({ state, descriptors, navigation }: BarPr
 }
 
 const styles = StyleSheet.create({
-  wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', paddingHorizontal: 16 },
+  wrap: { position: 'absolute', left: 0, right: 0, bottom: 0, alignItems: 'center', paddingHorizontal: 14 },
   bar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4,
-    borderRadius: 999, borderWidth: 1, padding: 6, width: '100%', maxWidth: 420,
-    shadowColor: '#17302A', shadowOpacity: 0.14, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+    flexDirection: 'row', alignItems: 'center', borderRadius: 28, borderWidth: 1,
+    paddingVertical: 8, paddingHorizontal: 6, width: '100%', maxWidth: 440,
+    shadowColor: '#17302A', shadowOpacity: 0.1, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 8,
   },
-  item: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 48, minWidth: 48, paddingHorizontal: 12, borderRadius: 999, justifyContent: 'center' },
-  label: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  item: { flex: 1, alignItems: 'center', gap: 3, minHeight: 52, justifyContent: 'center' },
+  capsule: { width: 52, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  label: { fontSize: 11.5 },
 });

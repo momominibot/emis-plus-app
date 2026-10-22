@@ -1,0 +1,18 @@
+{
+ "model": "doubao-seedream-5-0-pro-260628",
+ "prompt": "Same illustration style, colours and soft lighting as the reference image: a single hand with the index finger showing one small clean straight cut with a tiny red line, a folded white gauze pad and a small plaster beside it, cute soft 3D flat style, pastel skin tone, centred, plain pure white background, no text, no letters, no logo",
+ "size_req": "1024x1024",
+ "size": "1024x1024",
+ "seed": -1,
+ "refs": [
+  "/Users/michiyomimi/Desktop/emis-plus-app/public/wound-advisor/graze.png"
+ ],
+ "usage": {
+  "input_images": 1,
+  "generated_images": 1,
+  "output_tokens": 4096,
+  "total_tokens": 4096
+ },
+ "seconds": 62.2,
+ "bytes": 624835
+}

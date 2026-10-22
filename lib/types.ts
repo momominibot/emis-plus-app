@@ -14,6 +14,9 @@ export interface Product {
   available?: boolean;
   /** Product page on emis.asia, where checkout happens. */
   url?: string;
+  /** Detail page only. */
+  descriptionHtml?: string;
+  images?: string[];
 }
 
 export interface Collection {

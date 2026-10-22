@@ -58,7 +58,7 @@ export default function OstomyScreen() {
         </View>
 
         <TouchableOpacity style={[styles.addBtn, { backgroundColor: colors.primary }]} onPress={() => setShowForm(!showForm)}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Log Entry'}</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Log Entry'}</Text>
         </TouchableOpacity>
 
         {showForm && (
@@ -67,7 +67,7 @@ export default function OstomyScreen() {
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
               {['formed', 'semi-formed', 'loose', 'liquid'].map(t => (
                 <TouchableOpacity key={t} style={[styles.chip, outputType === t && { backgroundColor: colors.primary }]} onPress={() => setOutputType(t)}>
-                  <Text style={[styles.chipText, outputType === t && { color: '#fff' }]}>{t}</Text>
+                  <Text style={[styles.chipText, outputType === t && { color: colors.onPrimary }]}>{t}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -80,14 +80,14 @@ export default function OstomyScreen() {
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
               {['healthy', 'irritated', 'broken', 'bleeding'].map(s => (
                 <TouchableOpacity key={s} style={[styles.chip, skinCondition === s && { backgroundColor: colors.primary }]} onPress={() => setSkinCondition(s)}>
-                  <Text style={[styles.chipText, skinCondition === s && { color: '#fff' }]}>{s}</Text>
+                  <Text style={[styles.chipText, skinCondition === s && { color: colors.onPrimary }]}>{s}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
             <TextInput style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border, height: 50 }]} value={notes} onChangeText={setNotes} multiline placeholderTextColor={colors.textSecondary} />
             <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={save}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Save Entry</Text>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Save Entry</Text>
             </TouchableOpacity>
           </View>
         )}

@@ -7,10 +7,10 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { sendChatMessage, ChatMessage } from '@/lib/ai';
 
 const QUICK_PROMPTS = [
-  'What wound dressing should I use?',
+  'Which wound dressing should I use?',
   'How do I choose compression stockings?',
   'What ostomy supplies do I need?',
-  'Do you have free shipping?',
+  'How does delivery work?',
 ];
 
 export default function AIAssistantScreen() {
@@ -46,12 +46,13 @@ export default function AIAssistantScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <Stack.Screen options={{ title: 'Product Assistant' }} />
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <Stack.Screen options={{ title: 'Product assistant' }} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView
           ref={scrollRef}
-          contentContainerStyle={{ padding: 16, gap: 12 }}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ padding: 16, gap: 12, maxWidth: 720, width: '100%', alignSelf: 'center' }}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
         >
           {messages.map((msg, i) => (
@@ -59,44 +60,43 @@ export default function AIAssistantScreen() {
               styles.messageBubble,
               msg.role === 'user'
                 ? [styles.userBubble, { backgroundColor: colors.primary }]
-                : [styles.assistantBubble, { backgroundColor: colors.surface }],
+                : [styles.assistantBubble, { backgroundColor: colors.surface, borderColor: colors.border, borderWidth: 1 }],
             ]}>
               <Text style={[
                 styles.messageText,
-                { color: msg.role === 'user' ? '#fff' : colors.text },
+                { color: msg.role === 'user' ? colors.onPrimary : colors.text },
               ]}>{msg.content}</Text>
-              {msg.productSuggestions && msg.productSuggestions.length > 0 && (
+              {msg.links && msg.links.length > 0 && (
                 <View style={{ marginTop: 10, gap: 8 }}>
-                  {msg.productSuggestions.map((p, j) => (
+                  {msg.links.map((l, j) => (
                     <TouchableOpacity
                       key={j}
                       style={[styles.productSuggestion, { backgroundColor: colors.primaryLight }]}
-                      onPress={() => Linking.openURL(`https://emis.asia/products/${p.handle}`)}
+                      onPress={() => Linking.openURL(l.url)}
                     >
-                      <Text style={[styles.suggestionTitle, { color: colors.primary }]}>{p.title}</Text>
-                      <Text style={[styles.suggestionPrice, { color: colors.textSecondary }]}>{p.price}</Text>
+                      <Text style={[styles.suggestionTitle, { color: colors.primaryInk }]}>{l.title}</Text>
+                      <Text style={[styles.suggestionPrice, { color: colors.textSecondary }]}>{l.note}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               )}
             </View>
           ))}
+          {messages.length <= 1 && (
+            <View style={styles.quickWrap}>
+              {QUICK_PROMPTS.map(p => (
+                <TouchableOpacity key={p} style={[styles.quickBtn, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={() => send(p)}>
+                  <Text style={[styles.quickText, { color: colors.primaryInk }]}>{p}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
           {loading && (
             <View style={[styles.typing, { backgroundColor: colors.surface }]}>
               <Text style={{ color: colors.textSecondary }}>●●●</Text>
             </View>
           )}
         </ScrollView>
-
-        {messages.length <= 1 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 8, gap: 8 }}>
-            {QUICK_PROMPTS.map(p => (
-              <TouchableOpacity key={p} style={[styles.quickBtn, { backgroundColor: colors.surface }]} onPress={() => send(p)}>
-                <Text style={[styles.quickText, { color: colors.text }]}>{p}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
 
         <View style={[styles.inputBar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
           <TextInput
@@ -109,7 +109,7 @@ export default function AIAssistantScreen() {
             multiline
           />
           <TouchableOpacity style={[styles.sendBtn, { backgroundColor: colors.primary }]} onPress={() => send(input)} disabled={loading}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>Send</Text>
+            <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Send</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -127,9 +127,10 @@ const styles = StyleSheet.create({
   suggestionTitle: { fontSize: 14, fontWeight: '700' },
   suggestionPrice: { fontSize: 12, marginTop: 2 },
   typing: { alignSelf: 'flex-start', padding: 12, borderRadius: 16, borderBottomLeftRadius: 4 },
-  quickBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
-  quickText: { fontSize: 13, fontWeight: '500' },
-  inputBar: { flexDirection: 'row', padding: 12, gap: 10, borderTopWidth: 1 },
-  input: { flex: 1, padding: 12, borderRadius: 20, fontSize: 15, maxHeight: 100 },
-  sendBtn: { paddingHorizontal: 20, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  quickWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 2 },
+  quickBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, borderWidth: 1, alignSelf: 'flex-start' },
+  quickText: { fontSize: 14, fontWeight: '600' },
+  inputBar: { flexDirection: 'row', padding: 12, gap: 10, borderTopWidth: 1, alignItems: 'flex-end' },
+  input: { flex: 1, paddingHorizontal: 16, paddingVertical: 13, borderRadius: 24, fontSize: 16, maxHeight: 110, minHeight: 48 },
+  sendBtn: { paddingHorizontal: 20, height: 48, borderRadius: 24, justifyContent: 'center', alignItems: 'center' },
 });

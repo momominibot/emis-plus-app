@@ -57,7 +57,7 @@ export default function ReelScreen() {
             <TouchableOpacity onPress={() => router.push(reel.relatedTool!.route as any)}
               style={[cs.card, { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, backgroundColor: colors.primaryLight, borderColor: colors.primary + '33' }]}>
               <Ionicons name="medkit" size={18} color={colors.primary} />
-              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primaryDark }}>Try: {reel.relatedTool.label}</Text>
+              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.primaryInk }}>Try: {reel.relatedTool.label}</Text>
             </TouchableOpacity>
           ) : null}
         </View>

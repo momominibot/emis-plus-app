@@ -84,15 +84,15 @@ export default function ExportScreen() {
       <Stack.Screen options={{ title: 'Export & Transfer' }} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <View style={[styles.notice, { backgroundColor: colors.primaryLight }]}>
-          <Text style={[styles.noticeText, { color: colors.primary }]}>
+          <Text style={[styles.noticeText, { color: colors.primaryInk }]}>
             🔒 All exports happen on your device. Data is shared via your phone's share sheet - we never upload or store your medical data.
           </Text>
         </View>
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Share with Doctor</Text>
         <TouchableOpacity style={[styles.summaryBtn, { backgroundColor: colors.primary }]} onPress={handleDoctorSummary} disabled={exporting}>
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>📄 Generate Doctor Summary</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 4 }}>All records in one readable report</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700', fontSize: 16 }}>📄 Generate Doctor Summary</Text>
+          <Text style={{ color: colors.onPrimary, fontSize: 13, marginTop: 4 }}>All records in one readable report</Text>
         </TouchableOpacity>
 
         <View style={{ gap: 8, marginTop: 12 }}>
@@ -115,7 +115,7 @@ export default function ExportScreen() {
             Export a backup file, send it to your new device (AirDrop, email, messaging), and import it there. No cloud, no account.
           </Text>
           <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={handleBackup}>
-            <Text style={{ color: '#fff', fontWeight: '700' }}>📤 Export Backup File</Text>
+            <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>📤 Export Backup File</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.btnOutline, { borderColor: colors.primary }]} onPress={handleImport}>
             <Text style={{ color: colors.primary, fontWeight: '700' }}>📥 Import from Backup</Text>

@@ -21,14 +21,16 @@ function RootLayoutNav() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: colors.surface },
-          headerTintColor: colors.text,
-          headerTitleStyle: { fontWeight: '700' },
+          headerStyle: { backgroundColor: colors.background },
+          headerShadowVisible: false,
+          headerTintColor: colors.primary,
+          headerTitleStyle: { fontWeight: '700', fontSize: 17, color: colors.text },
+          headerBackTitle: 'Back',
           contentStyle: { backgroundColor: colors.background },
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="ai-assistant" options={{ title: 'Product Assistant' }} />
+        <Stack.Screen name="ai-assistant" options={{ title: 'Product assistant' }} />
         <Stack.Screen name="product/[handle]" options={{ title: 'Product' }} />
         <Stack.Screen name="tools/compression" options={{ title: 'Compression Stocking' }} />
         <Stack.Screen name="tools/wound" options={{ title: 'Wound Tracker' }} />

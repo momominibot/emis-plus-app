@@ -61,7 +61,7 @@ export default function GuideScreen() {
         ))}
 
         <View style={[cs.card, { backgroundColor: colors.primaryLight, borderColor: colors.primary + '33' }]}>
-          <Text style={{ fontSize: 16, fontWeight: '700', color: colors.primaryDark }}>Key takeaways</Text>
+          <Text style={{ fontSize: 16, fontWeight: '700', color: colors.primaryInk }}>Key takeaways</Text>
           <Bullets items={article.keyTakeaways} />
         </View>
 

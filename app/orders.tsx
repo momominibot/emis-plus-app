@@ -24,7 +24,7 @@ export default function OrdersScreen() {
           your emis.asia account.
         </Text>
         <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={() => WebBrowser.openBrowserAsync(STORE_URL + '/account')}>
-          <Text style={styles.btnText}>Open my emis.asia account</Text>
+          <Text style={[styles.btnText, { color: colors.onPrimary }]}>Open my emis.asia account</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -38,5 +38,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700' },
   body: { fontSize: 15, lineHeight: 22, textAlign: 'center' },
   btn: { borderRadius: 12, paddingVertical: 14, paddingHorizontal: 20, alignSelf: 'stretch', alignItems: 'center', marginTop: 4 },
-  btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  btnText: { fontSize: 16, fontWeight: '700' },
 });

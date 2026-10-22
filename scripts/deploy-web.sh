@@ -11,10 +11,7 @@ if [ -n "$(git status --porcelain -- app components lib constants assets app.jso
   exit 1
 fi
 
-rm -rf dist
-EXPO_NO_TELEMETRY=1 CI=1 npx expo export -p web --output-dir dist
-cp dist/index.html dist/404.html   # GitHub Pages serves 404.html for deep links
-touch dist/.nojekyll               # keep folders that start with _ (Expo's _expo/)
+scripts/build-web.sh
 
 git fetch -q origin gh-pages
 TMP=$(mktemp -d)
@@ -22,7 +19,8 @@ trap 'git worktree remove --force "$TMP" >/dev/null 2>&1 || true' EXIT
 git worktree add -q --detach "$TMP" origin/gh-pages
 # Keep earlier JS bundles: GitHub's CDN can serve a cached 404.html/index.html
 # for ~10 minutes that still points at the previous bundle.
-rsync -a --delete --exclude .git --filter='P _expo/static/js/**' dist/ "$TMP"/
+# Keep files other agents add to gh-pages on purpose (mobile.html = phone-frame preview).
+rsync -a --delete --exclude .git --filter='P _expo/static/js/**' --filter='P mobile.html' dist/ "$TMP"/
 cd "$TMP"
 git add -A
 if git diff --cached --quiet; then

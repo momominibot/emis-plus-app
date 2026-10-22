@@ -116,7 +116,7 @@ export default function LearnScreen() {
               return (
                 <TouchableOpacity key={b.handle} onPress={() => setBlogTab(b.handle)}
                   style={[styles.tab, { backgroundColor: active ? colors.primary : colors.surfaceSunken, borderColor: active ? colors.primary : colors.border }]}>
-                  <Text style={{ color: active ? '#fff' : colors.textSecondary, fontWeight: '600', fontSize: 14 }}>{b.title}</Text>
+                  <Text style={{ color: active ? colors.onPrimary : colors.textSecondary, fontWeight: '600', fontSize: 14 }}>{b.title}</Text>
                 </TouchableOpacity>
               );
             })}

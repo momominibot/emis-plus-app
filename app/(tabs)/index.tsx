@@ -58,7 +58,7 @@ export default function HomeScreen() {
           subtitle={new Date().toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long' })}
           right={
             <TouchableOpacity onPress={() => router.push('/account')} style={[styles.avatar, { backgroundColor: colors.primaryLight }]} accessibilityLabel="Account">
-              <Text style={[styles.avatarText, { color: colors.primaryDark }]}>{(name || 'G')[0].toUpperCase()}</Text>
+              <Text style={[styles.avatarText, { color: colors.primaryInk }]}>{(name || 'G')[0].toUpperCase()}</Text>
             </TouchableOpacity>
           }
         />
@@ -66,7 +66,7 @@ export default function HomeScreen() {
         {/* Search */}
         <TouchableOpacity
           style={[styles.searchBar, { backgroundColor: colors.surface, borderColor: colors.border }, ui.cardShadow]}
-          onPress={() => router.push('/shop')}
+          onPress={() => router.push({ pathname: '/shop', params: { focus: String(Date.now()) } })}
           accessibilityRole="search"
         >
           <Ionicons name="search" size={20} color={colors.textTertiary} />
@@ -78,25 +78,25 @@ export default function HomeScreen() {
           <View style={[styles.hero, { backgroundColor: colors.primaryLight }]}>
             <View style={styles.heroText}>
               <Text style={[styles.heroEyebrow, { color: colors.primary }]}>SINGAPORE MEDICAL SUPPLIES</Text>
-              <Text style={[styles.heroTitle, { color: colors.primaryDark }]}>Wound, ostomy and compression care, in one place</Text>
+              <Text style={[styles.heroTitle, { color: colors.primaryInk }]}>Wound, ostomy and compression care, in one place</Text>
               <Text style={[styles.heroBody, { color: colors.textSecondary }]}>
-                Clinical-grade products with guides and tools to help you choose well.
+                Products, guides and tools to help you choose well.
               </Text>
               <View style={styles.heroActions}>
                 <TouchableOpacity style={[styles.heroBtn, { backgroundColor: colors.primary }]} onPress={() => router.push('/shop')}>
-                  <Text style={styles.heroBtnText}>Shop now</Text>
+                  <Text style={[styles.heroBtnText, { color: colors.onPrimary }]}>Shop now</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={[styles.heroBtnGhost, { backgroundColor: colors.surface }]} onPress={() => router.push('/tools/wound-advisor')}>
-                  <Text style={[styles.heroBtnGhostText, { color: colors.primaryDark }]}>Find a dressing</Text>
+                  <Text style={[styles.heroBtnGhostText, { color: colors.primaryInk }]}>Find a dressing</Text>
                 </TouchableOpacity>
               </View>
             </View>
-            <View style={[styles.heroArtWrap, wide && { width: 250, height: 250 }]} pointerEvents="none">
+            <View style={[styles.heroArtWrap, wide && { width: 220, height: 220 }]} pointerEvents="none">
               <Drift amplitude={0} duration={7000} tilt={0} scale={0.05} style={styles.heroStage}>
                 <View style={[styles.heroStageCircle, { backgroundColor: colors.primary, opacity: 0.1 }]} />
               </Drift>
               <Drift amplitude={5} duration={5600} tilt={0.8} scale={0.02}>
-                <Image source={ART.hero} style={[styles.heroArt, wide && { width: 250, height: 250 }]} resizeMode="contain" />
+                <Image source={ART.hero} style={[styles.heroArt, wide && { width: 220, height: 220 }]} resizeMode="contain" />
               </Drift>
             </View>
           </View>
@@ -127,7 +127,7 @@ export default function HomeScreen() {
               <Image source={ART.assistant} style={styles.featureArt} resizeMode="contain" />
             </Drift>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.featureTitle, { color: colors.primaryDark }]}>Not sure what to choose?</Text>
+              <Text style={[styles.featureTitle, { color: colors.primaryInk }]}>Not sure what to choose?</Text>
               <Text style={[styles.featureBody, { color: colors.textSecondary }]}>Ask our product assistant. Product help only, not medical advice.</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color={colors.primary} />
@@ -154,8 +154,8 @@ export default function HomeScreen() {
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <Text style={[styles.pointsValue, { color: colors.text }]}>{profile?.points ?? 0}</Text>
                 <Text style={[styles.pointsLabel, { color: colors.textSecondary }]}>Health Points</Text>
-                <View style={[styles.tierBadge, { backgroundColor: tier.color + '22' }]}>
-                  <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
+                <View style={[styles.tierBadge, { backgroundColor: colors.surfaceSunken }]}>
+                  <Text style={[styles.tierText, { color: colors[profile?.tier || 'silver'] }]}>{tier.name}</Text>
                 </View>
               </View>
               {nextTier && (
@@ -227,20 +227,20 @@ const styles = StyleSheet.create({
   searchBar: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, paddingHorizontal: 16, height: 50, borderRadius: 14, borderWidth: 1, gap: 10 },
   searchPlaceholder: { fontSize: 15, flex: 1 },
   heroWrap: { paddingHorizontal: 20, marginTop: 16 },
-  hero: { flexDirection: 'row', borderRadius: 24, padding: 18, paddingRight: 6, gap: 2, overflow: 'hidden', minHeight: 216 },
+  hero: { flexDirection: 'row', alignItems: 'center', borderRadius: 24, padding: 16, paddingRight: 4, gap: 2, overflow: 'hidden' },
   heroText: { flex: 1, justifyContent: 'center', gap: 6 },
   heroEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
-  heroTitle: { fontSize: 20, lineHeight: 26, fontWeight: '800', letterSpacing: -0.3 },
+  heroTitle: { fontSize: 19, lineHeight: 25, fontWeight: '800', letterSpacing: -0.3 },
   heroBody: { fontSize: 13, lineHeight: 18 },
-  heroActions: { flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' },
-  heroBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
-  heroBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  heroBtnGhost: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12 },
+  heroActions: { flexDirection: 'row', gap: 8, marginTop: 10 },
+  heroBtn: { paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', borderRadius: 12 },
+  heroBtnText: { fontWeight: '700', fontSize: 14 },
+  heroBtnGhost: { paddingHorizontal: 12, minHeight: 44, justifyContent: 'center', borderRadius: 12 },
   heroBtnGhostText: { fontWeight: '700', fontSize: 14 },
-  heroArtWrap: { width: 156, height: 190, alignItems: 'center', justifyContent: 'center' },
-  heroStage: { position: 'absolute', top: 24, left: 8, right: 8, bottom: 24, alignItems: 'center', justifyContent: 'center' },
-  heroStageCircle: { width: 136, height: 136, borderRadius: 68 },
-  heroArt: { width: 176, height: 176 },
+  heroArtWrap: { width: 120, height: 140, alignItems: 'center', justifyContent: 'center' },
+  heroStage: { position: 'absolute', top: 14, left: 4, right: 4, bottom: 14, alignItems: 'center', justifyContent: 'center' },
+  heroStageCircle: { width: 112, height: 112, borderRadius: 56 },
+  heroArt: { width: 132, height: 132 },
   needGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 12 },
   needTileWrap: { flexBasis: '47%', flexGrow: 1 },
   needTile: { minHeight: 132, borderRadius: 18, borderWidth: 1, padding: 14, justifyContent: 'flex-end', overflow: 'hidden' },

@@ -8,6 +8,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   productSuggestions?: { title: string; handle: string; price: string }[];
+  links?: { title: string; url: string; note: string }[];
 }
 
 export interface AnalysisResult {
@@ -89,35 +90,38 @@ export async function generateHealthSummary(
   }
 }
 
-// --- Dev fallback (no backend connected) ---
+// --- Built-in answers (no AI proxy is connected) ---
+// Only states what the app can stand behind: no prices, delivery terms or
+// programme promises. Prices always come live from Shopify in the Shop tab.
+
+export interface Suggestion { title: string; url: string; note: string }
 
 async function devAssistantResponse(message: string): Promise<ChatMessage> {
   const lower = message.toLowerCase();
   let content = '';
-  let suggestions: { title: string; handle: string; price: string }[] = [];
+  let links: Suggestion[] = [];
 
-  if (lower.includes('wound') || lower.includes('cut') || lower.includes('ulcer')) {
-    content = `For wound care, I can help you find the right dressing. A few things to consider:\n\n1. How much drainage (exudate) does the wound have?\n2. Is it a chronic ulcer or an acute cut?\n3. What size is the wound?\n\nBased on your needs, here are products our customers often use:`;
-    suggestions = [
-      { title: 'Convatec Esenta Sting Free Adhesive Remover', handle: 'convatec-esenta', price: 'From $18.90' },
-    ];
+  if (lower.includes('wound') || lower.includes('cut') || lower.includes('ulcer') || lower.includes('dressing')) {
+    content = `The quickest way to narrow down a dressing is the Wound Product Advisor in the Tools tab. It asks five short questions (wound type, how wet it is, signs of infection, depth, skin) and shows the dressing type that fits, with products from our store.\n\nIf the wound is spreading, very painful, or you feel unwell, please see a doctor first.`;
+    links = [{ title: 'Wound care range', url: 'https://www.emis.asia/collections/wound-care-supplies-singapore', note: 'Browse on emis.asia' }];
   } else if (lower.includes('ostomy') || lower.includes('stoma') || lower.includes('colostomy') || lower.includes('ileostomy')) {
-    content = `For ostomy care, the key products are:\n\n1. Pouches/bags - one-piece or two-piece systems\n2. Barriers/wafer - skin protection around the stoma\n3. Accessories - adhesive remover, deodorant, belts\n\nTell me:\n- Do you use a one-piece or two-piece system?\n- What's your stoma size?\n- Any skin irritation issues?\n\nHere are popular options:`;
-    suggestions = [
-      { title: 'Convatec Ostomy Products', handle: 'convatec', price: 'View range' },
-      { title: 'Coloplast Ostomy Products', handle: 'coloplast-ostomy-product', price: 'View range' },
+    content = `Ostomy supplies usually fall into three groups:\n\n1. Pouches: one-piece or two-piece systems\n2. Skin barriers and wafers\n3. Accessories: adhesive remover, barrier spray, belts\n\nIt helps to know your system (one-piece or two-piece), your stoma size and whether the skin around it is sore. The Stoma Skin Check in the Tools tab can help with the skin question.`;
+    links = [
+      { title: 'Convatec ostomy range', url: 'https://www.emis.asia/collections/convatec', note: 'Browse on emis.asia' },
+      { title: 'Coloplast ostomy range', url: 'https://www.emis.asia/collections/coloplast-ostomy-product', note: 'Browse on emis.asia' },
     ];
   } else if (lower.includes('compression') || lower.includes('stocking') || lower.includes('varicose')) {
-    content = `For compression stockings, getting the right size is important. You'll need to measure:\n\n- Ankle circumference (narrowest point)\n- Calf circumference (widest point)\n- Leg length (heel to knee)\n\nUse our Compression Measurement Tool in the Tools tab to find your size. Your doctor or therapist can advise on the appropriate compression level for your needs.`;
+    content = `For compression stockings, size matters. You will need:\n\n- Ankle circumference (narrowest point)\n- Calf circumference (widest point)\n- Leg length (heel to knee)\n\nThe Compression Sizing tool in the Tools tab works out your size. Your doctor or therapist should advise on the compression level.`;
+    links = [{ title: 'Compression stockings', url: 'https://www.emis.asia/collections/compression-stocking', note: 'Browse on emis.asia' }];
   } else if (lower.includes('delivery') || lower.includes('shipping') || lower.includes('ship')) {
-    content = `We offer:\n- Free standard delivery for orders over $50 (Gold and Diamond members)\n- Standard delivery: 2-3 business days within Singapore\n- Express delivery: next business day\n\nYou can track your order anytime in the Orders tab.`;
+    content = `Delivery options and fees are shown at checkout on emis.asia before you pay. If you have a question about an order, email hello@emis.asia.`;
   } else if (lower.includes('point') || lower.includes('reward') || lower.includes('voucher')) {
-    content = `Our rewards program:\n- Earn 1 point per $1 spent (Silver), 1.5x (Gold), 2x (Diamond)\n- Redeem points for vouchers\n- Refer a friend and both get bonus points\n- Gold members get free shipping over $50\n- Diamond members get free shipping on everything!\n\nCheck your points in the Account tab.`;
+    content = `Health Points are in preview. For now your points and referral code are saved on this device only; the full programme starts with EMIS+ sign-in. You can see your points in the Account tab.`;
   } else {
-    content = `I can help you find the right products for wound care, ostomy supplies, compression wear, and daily living aids. What are you looking for?\n\nYou can also:\n- Browse by category in the Shop tab\n- Use our health measurement tools in the Tools tab\n- Track orders in the Orders tab\n\nRemember: I help with product selection only. For medical advice, please consult your doctor.`;
+    content = `I can point you to the right products for wound care, ostomy, compression and hygiene. What are you looking for?\n\nYou can also browse by category in the Shop tab, or use the guided checks in the Tools tab.\n\nI help with product selection only. For medical advice, please speak to your doctor or nurse.`;
   }
 
-  return { role: 'assistant', content, productSuggestions: suggestions };
+  return { role: 'assistant', content, links };
 }
 
 export function getSystemPrompt() {

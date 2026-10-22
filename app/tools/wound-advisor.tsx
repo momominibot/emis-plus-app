@@ -157,7 +157,7 @@ function Result({ result, onRestart }: { result: WoundAdvice; onRestart: () => v
         backgroundColor: urgent ? colors.dangerBg : colors.primaryLight,
         borderColor: urgent ? colors.danger + '66' : colors.primary + '33',
       }]}>
-        <Text style={{ fontSize: 22, fontWeight: '800', color: urgent ? colors.danger : colors.primaryDark }}>{result.headline}</Text>
+        <Text style={{ fontSize: 22, fontWeight: '800', color: urgent ? colors.danger : colors.primaryInk }}>{result.headline}</Text>
         <Text style={{ fontSize: 15, lineHeight: 22, color: colors.text }}>{result.summary}</Text>
         {result.refer !== 'none' ? (
           <View style={{ alignSelf: 'flex-start', borderRadius: 999, borderWidth: 1, borderColor: referColor, paddingHorizontal: 12, paddingVertical: 4 }}>
@@ -177,7 +177,7 @@ function Result({ result, onRestart }: { result: WoundAdvice; onRestart: () => v
                 <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{i + 1}. {p.label}</Text>
                 {i === 0 ? (
                   <View style={{ backgroundColor: colors.primary, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 }}>
-                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>Start here</Text>
+                    <Text style={{ color: colors.onPrimary, fontSize: 11, fontWeight: '700' }}>Start here</Text>
                   </View>
                 ) : null}
               </View>

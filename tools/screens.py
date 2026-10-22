@@ -5,7 +5,7 @@ import os, socket, subprocess, sys, time
 from PIL import Image
 
 DIST, OUT = sys.argv[1], sys.argv[2]
-PAGES = ["", "shop", "learn", "tools", "account", "tools/wound-advisor", "reel/S0Dgmo9wwcg"]
+PAGES = (os.environ.get("SCREENS") or ",shop,learn,tools,account,tools/wound-advisor,reel/S0Dgmo9wwcg").split(",")
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRATCH = os.environ.get("PAGES_SERVER", os.path.join(HERE, "pages_server.py"))
 
@@ -30,7 +30,7 @@ def main():
             for path in PAGES:
                 page.goto(f"http://127.0.0.1:{port}/emis-plus-app/{path}", wait_until="networkidle")
                 page.wait_for_timeout(1800)
-                f = f"/tmp/emis-shot-{path.replace('/', '_') or 'home'}.png"
+                f = os.path.join(os.environ.get("SHOT_DIR", "/tmp"), f"emis-shot-{path.replace('/', '_') or 'home'}.png")
                 page.screenshot(path=f, full_page=False)
                 shots.append(f)
             b.close()

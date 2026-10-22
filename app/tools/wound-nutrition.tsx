@@ -168,7 +168,7 @@ function Target({ title, range, unit }: { title: string; range: string; unit: st
   const colors = useColors();
   return (
     <View style={[cs.card, { flex: 1, backgroundColor: colors.primaryLight, borderColor: colors.primary + '33', padding: 12, alignItems: 'center' }]}>
-      <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primaryDark }}>{title}</Text>
+      <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primaryInk }}>{title}</Text>
       <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text, textAlign: 'center' }}>{range}</Text>
       <Text style={{ fontSize: 12, color: colors.textSecondary, textAlign: 'center' }}>{unit}</Text>
     </View>

@@ -22,11 +22,20 @@ export default function ShopScreen() {
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
 
-  const { category } = useLocalSearchParams<{ category?: string }>();
+  const { category, focus } = useLocalSearchParams<{ category?: string; focus?: string }>();
+
+  const searchRef = useRef<TextInput>(null);
 
   useEffect(() => {
     loadCollections();
   }, []);
+
+  // Home's search bar sends a fresh focus value on every tap.
+  useEffect(() => {
+    if (!focus) return;
+    const t = setTimeout(() => searchRef.current?.focus(), 250);
+    return () => clearTimeout(t);
+  }, [focus]);
 
   // Home's "Shop by need" tiles open this tab with ?category=<collection handle>
   useEffect(() => {
@@ -95,6 +104,7 @@ export default function ShopScreen() {
           onChangeText={setSearchQuery}
           onSubmitEditing={onSearch}
           returnKeyType="search"
+          ref={searchRef}
         />
         {searchQuery.length > 0 && (
           <TouchableOpacity onPress={() => { setSearchQuery(''); loadProducts(activeCategory || undefined); }} hitSlop={10}>
@@ -108,7 +118,7 @@ export default function ShopScreen() {
           style={[styles.categoryChip, { backgroundColor: !activeCategory ? colors.primary : colors.surfaceSunken, borderColor: !activeCategory ? colors.primary : colors.border }]}
           onPress={() => selectCategory('')}
         >
-          <Text style={[styles.categoryText, { color: !activeCategory ? '#fff' : colors.textSecondary }]}>All</Text>
+          <Text style={[styles.categoryText, { color: !activeCategory ? colors.onPrimary : colors.textSecondary }]}>All</Text>
         </TouchableOpacity>
         {collections.map(c => (
           <TouchableOpacity
@@ -116,7 +126,7 @@ export default function ShopScreen() {
             style={[styles.categoryChip, { backgroundColor: activeCategory === c.handle ? colors.primary : colors.surfaceSunken, borderColor: activeCategory === c.handle ? colors.primary : colors.border }]}
             onPress={() => selectCategory(c.handle)}
           >
-            <Text style={[styles.categoryText, { color: activeCategory === c.handle ? '#fff' : colors.textSecondary }]} numberOfLines={1}>
+            <Text style={[styles.categoryText, { color: activeCategory === c.handle ? colors.onPrimary : colors.textSecondary }]} numberOfLines={1}>
               {c.title.replace(/Products Singapore$/i, '').trim()}
             </Text>
           </TouchableOpacity>
@@ -152,7 +162,7 @@ export default function ShopScreen() {
                 {item.vendor && (
                   <Text style={[styles.productVendor, { color: colors.textTertiary }]}>{item.vendor.toUpperCase()}</Text>
                 )}
-                <Text style={[styles.productName, { color: colors.text }]} numberOfLines={2}>{item.title}</Text>
+                <Text style={[styles.productName, { color: colors.text }]} numberOfLines={3}>{item.title}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
                   <Text style={[styles.productPrice, { color: colors.text }]}>S${item.price}</Text>
                   {item.compareAtPrice && parseFloat(item.compareAtPrice) > parseFloat(item.price) && (
@@ -170,7 +180,7 @@ export default function ShopScreen() {
                 <Ionicons name="alert-circle-outline" size={40} color={colors.textTertiary} />
                 <Text style={{ color: colors.textSecondary, fontSize: 15, marginTop: 8 }}>{error}</Text>
                 <TouchableOpacity style={[styles.retryBtn, { backgroundColor: colors.primary }]} onPress={() => loadProducts(activeCategory || undefined)}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>Try again</Text>
+                  <Text style={{ color: colors.onPrimary, fontWeight: '600' }}>Try again</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -201,8 +211,8 @@ const styles = StyleSheet.create({
   soldOut: { position: 'absolute', top: 10, left: 10, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   soldOutText: { fontSize: 11, fontWeight: '700' },
   productImage: { width: '100%', aspectRatio: 1, backgroundColor: '#fff', padding: 8 },
-  productVendor: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 2 },
-  productName: { fontSize: 14, fontWeight: '600', lineHeight: 18, minHeight: 36 },
+  productVendor: { fontSize: 11, fontWeight: '600', letterSpacing: 0.4, marginBottom: 3 },
+  productName: { fontSize: 14, fontWeight: '600', lineHeight: 19, minHeight: 57 },
   productPrice: { fontSize: 16, fontWeight: '800' },
   comparePrice: { fontSize: 13, textDecorationLine: 'line-through', marginLeft: 6 },
   empty: { alignItems: 'center', padding: 40, gap: 8 },

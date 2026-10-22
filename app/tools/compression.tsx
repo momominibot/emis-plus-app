@@ -72,7 +72,7 @@ export default function CompressionScreen() {
               style={[styles.legBtn, leg === l && { backgroundColor: colors.primary }]}
               onPress={() => setLeg(l)}
             >
-              <Text style={[styles.legText, leg === l && { color: '#fff' }]}>{l === 'left' ? 'Left Leg' : 'Right Leg'}</Text>
+              <Text style={[styles.legText, leg === l && { color: colors.onPrimary }]}>{l === 'left' ? 'Left Leg' : 'Right Leg'}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -116,7 +116,7 @@ export default function CompressionScreen() {
           />
 
           <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={calculate}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>Calculate Size</Text>
+            <Text style={{ color: colors.onPrimary, fontWeight: '700', fontSize: 16 }}>Calculate Size</Text>
           </TouchableOpacity>
         </View>
 
@@ -125,7 +125,7 @@ export default function CompressionScreen() {
             <Text style={[styles.resultLabel, { color: colors.primary }]}>Recommended Size</Text>
             <Text style={[styles.resultValue, { color: colors.primary }]}>{result}</Text>
             <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary, marginTop: 12 }]} onPress={save}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Save Measurement</Text>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Save Measurement</Text>
             </TouchableOpacity>
           </View>
         )}

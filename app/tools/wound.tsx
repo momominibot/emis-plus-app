@@ -54,7 +54,7 @@ export default function WoundScreen() {
       <Stack.Screen options={{ title: 'Wound Tracker' }} />
       <ScrollView contentContainerStyle={{ padding: 16 }}>
         <TouchableOpacity style={[styles.addBtn, { backgroundColor: colors.primary }]} onPress={() => setShowForm(!showForm)}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Add Wound Record'}</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Add Wound Record'}</Text>
         </TouchableOpacity>
 
         {showForm && (
@@ -79,14 +79,14 @@ export default function WoundScreen() {
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
               {(['none', 'light', 'moderate', 'heavy'] as const).map(e => (
                 <TouchableOpacity key={e} style={[styles.chip, exudate === e && { backgroundColor: colors.primary }]} onPress={() => setExudate(e)}>
-                  <Text style={[styles.chipText, exudate === e && { color: '#fff' }]}>{e}</Text>
+                  <Text style={[styles.chipText, exudate === e && { color: colors.onPrimary }]}>{e}</Text>
                 </TouchableOpacity>
               ))}
             </View>
             <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
             <TextInput style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border, height: 60 }]} value={notes} onChangeText={setNotes} multiline placeholder="Observations, dressing used..." placeholderTextColor={colors.textSecondary} />
             <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={save}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Save Record</Text>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Save Record</Text>
             </TouchableOpacity>
           </View>
         )}

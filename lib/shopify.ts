@@ -103,10 +103,15 @@ export async function getProducts(collectionHandle?: string): Promise<Product[]>
 
 export async function getProductByHandle(handle: string): Promise<Product | null> {
   const data = await storefrontQuery<{ product: any }>(
-    'query Product($handle: String!) { product(handle: $handle) { ' + PRODUCT_FIELDS + ' } }',
+    'query Product($handle: String!) { product(handle: $handle) { ' + PRODUCT_FIELDS + ' descriptionHtml images(first: 6) { edges { node { url } } } } }',
     { handle }
   );
-  return data.product ? mapProduct(data.product) : null;
+  if (!data.product) return null;
+  const p = mapProduct(data.product);
+  p.descriptionHtml = data.product.descriptionHtml || '';
+  const imgs = ((data.product.images && data.product.images.edges) || []).map(function(e: any) { return e.node.url; });
+  p.images = imgs.length ? imgs : (p.image ? [p.image] : []);
+  return p;
 }
 
 export async function getNewProducts(limit = 8): Promise<Product[]> {

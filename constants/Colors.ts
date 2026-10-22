@@ -1,4 +1,5 @@
-// EMIS+ palette. Green is the brand colour (from the EMIS+ logo, #209070);
+// EMIS+ palette. Green is the brand colour (from the EMIS+ logo, #209070;
+// the UI uses a slightly deeper #177A5C so text and buttons pass WCAG AA);
 // blue, coral and amber from the same logo are used sparingly for badges,
 // points and alerts so the app reads as a clean medical supplies store.
 
@@ -12,34 +13,39 @@ export const brand = {
 const light = {
   text: '#17302A',
   textSecondary: '#4C615B',
-  textTertiary: '#6D7F7A',
+  textTertiary: '#5E716B',
   background: '#F5F8F7',
   surface: '#FFFFFF',
   surfaceSunken: '#EDF2F0',
-  tint: '#1C8A6B',
-  tabIconDefault: '#6D7F7A',
-  tabIconSelected: '#1C8A6B',
+  tint: '#177A5C',
+  tabIconDefault: '#5E716B',
+  tabIconSelected: '#177A5C',
   border: '#E1E8E5',
   borderStrong: '#B5C3BE',
-  primary: '#1C8A6B',
-  primaryPressed: '#166E55',
+  primary: '#177A5C',
+  primaryPressed: '#126449',
   primaryLight: '#E3F3EC',
   primaryDark: '#0F5240',
+  // Text and icons on primary fills, and on primaryLight tints.
+  onPrimary: '#FFFFFF',
+  primaryInk: '#0F5240',
   secondary: '#4068B0',
   secondaryLight: '#E8EEF8',
-  accent: '#C98A12',
+  accent: '#9A6400',
   accentLight: '#FFF3D4',
-  danger: '#D4473C',
+  danger: '#B42318',
   dangerBg: '#FDEAE7',
-  success: '#1C8A6B',
+  success: '#177A5C',
   successBg: '#E3F3EC',
   warning: '#9A6400',
   warningBg: '#FFF3D4',
   info: '#3A5FA6',
   infoBg: '#E8EEF8',
-  silver: '#6B7684',
-  gold: '#B7791F',
-  diamond: '#3A5FA6',
+  silver: '#55606C',
+  gold: '#8A5A00',
+  diamond: '#2F4F8A',
+  // Outline of unchecked checkboxes and inputs: 3:1 against white (WCAG 1.4.11).
+  controlBorder: '#78897F',
 };
 
 const dark: typeof light = {
@@ -58,6 +64,8 @@ const dark: typeof light = {
   primaryPressed: '#3DBD96',
   primaryLight: '#143A2F',
   primaryDark: '#06201A',
+  onPrimary: '#06201A',
+  primaryInk: '#BFF0DF',
   secondary: '#8FB0EC',
   secondaryLight: '#17263D',
   accent: '#F2C35A',
@@ -73,6 +81,7 @@ const dark: typeof light = {
   silver: '#CBD5E1',
   gold: '#F2C35A',
   diamond: '#8FB0EC',
+  controlBorder: '#7A8C86',
 };
 
 export default { light, dark };

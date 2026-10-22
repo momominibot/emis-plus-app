@@ -54,13 +54,13 @@ export default function ToolsScreen() {
         {/* Banner */}
         <View style={[styles.banner, { backgroundColor: colors.primaryLight }]}>
           <View style={{ flex: 1, gap: 6 }}>
-            <Text style={[styles.bannerTitle, { color: colors.primaryDark }]}>Choose well, track clearly</Text>
+            <Text style={[styles.bannerTitle, { color: colors.primaryInk }]}>Choose well, track clearly</Text>
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>
               Quick checks point you to the right product type. Records stay on this phone and are never uploaded.
             </Text>
             <View style={styles.privacyRow}>
-              <Ionicons name="lock-closed" size={14} color={colors.primaryDark} />
-              <Text style={[styles.privacyText, { color: colors.primaryDark }]}>Private by design</Text>
+              <Ionicons name="lock-closed" size={14} color={colors.primaryInk} />
+              <Text style={[styles.privacyText, { color: colors.primaryInk }]}>Private by design</Text>
             </View>
           </View>
           <Drift amplitude={4} duration={5400} tilt={1.5} scale={0.02}>

@@ -70,7 +70,7 @@ export default function IntakeOutputScreen() {
         </Text>
 
         <TouchableOpacity style={[styles.addBtn, { backgroundColor: colors.primary }]} onPress={() => setShowForm(!showForm)}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Add Entry'}</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Add Entry'}</Text>
         </TouchableOpacity>
 
         {showForm && (
@@ -78,7 +78,7 @@ export default function IntakeOutputScreen() {
             <View style={styles.typeToggle}>
               {(['intake', 'output'] as const).map(t => (
                 <TouchableOpacity key={t} style={[styles.typeBtn, type === t && { backgroundColor: t === 'intake' ? '#3b82f6' : '#f59e0b' }]} onPress={() => setType(t)}>
-                  <Text style={[styles.typeText, type === t && { color: '#fff' }]}>{t === 'intake' ? 'Intake ↓' : 'Output ↑'}</Text>
+                  <Text style={[styles.typeText, type === t && { color: colors.onPrimary }]}>{t === 'intake' ? 'Intake ↓' : 'Output ↑'}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -86,7 +86,7 @@ export default function IntakeOutputScreen() {
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
               {(type === 'intake' ? intakeCategories : outputCategories).map(c => (
                 <TouchableOpacity key={c} style={[styles.chip, category === c && { backgroundColor: colors.primary }]} onPress={() => setCategory(c)}>
-                  <Text style={[styles.chipText, category === c && { color: '#fff' }]}>{c}</Text>
+                  <Text style={[styles.chipText, category === c && { color: colors.onPrimary }]}>{c}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -95,7 +95,7 @@ export default function IntakeOutputScreen() {
             <Text style={[styles.label, { color: colors.text }]}>Notes (optional)</Text>
             <TextInput style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]} value={notes} onChangeText={setNotes} placeholderTextColor={colors.textSecondary} />
             <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={save}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Save</Text>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Save</Text>
             </TouchableOpacity>
           </View>
         )}

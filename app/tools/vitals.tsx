@@ -120,7 +120,7 @@ export default function VitalsScreen() {
         )}
 
         <TouchableOpacity style={[styles.addBtn, { backgroundColor: colors.primary }]} onPress={() => setShowForm(!showForm)}>
-          <Text style={{ color: '#fff', fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Record Vitals'}</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>{showForm ? 'Cancel' : '+ Record Vitals'}</Text>
         </TouchableOpacity>
 
         {showForm && (
@@ -160,7 +160,7 @@ export default function VitalsScreen() {
             <Text style={[styles.label, { color: colors.text }]}>Notes</Text>
             <TextInput style={[styles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]} value={notes} onChangeText={setNotes} placeholderTextColor={colors.textSecondary} />
             <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={save}>
-              <Text style={{ color: '#fff', fontWeight: '700' }}>Save Reading</Text>
+              <Text style={{ color: colors.onPrimary, fontWeight: '700' }}>Save Reading</Text>
             </TouchableOpacity>
           </View>
         )}

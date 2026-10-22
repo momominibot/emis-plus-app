@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share, Image } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { brand } from '@/constants/Colors';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Share, Image, Linking } from 'react-native';
 import { TabHeader, ui } from '@/components/ui';
 import { TAB_BAR_SPACE } from '@/components/FloatingTabBar';
 import { useRouter } from 'expo-router';
@@ -64,11 +62,9 @@ export default function AccountScreen() {
   }
 
   const menuItems = [
-    { icon: 'gift-outline', label: 'My Vouchers', action: () => {} },
-    { icon: 'cube-outline', label: 'Order History', action: () => router.push('/orders') },
-    { icon: 'card-outline', label: 'Transaction History', action: () => {} },
-    { icon: 'call-outline', label: 'Contact Us', action: () => {} },
-    { icon: 'settings-outline', label: 'Settings', action: () => {} },
+    { icon: 'cube-outline', label: 'Order history', action: () => router.push('/orders') },
+    { icon: 'storefront-outline', label: 'My emis.asia account', action: () => Linking.openURL('https://www.emis.asia/account') },
+    { icon: 'mail-outline', label: 'Contact us: hello@emis.asia', action: () => Linking.openURL('mailto:hello@emis.asia') },
   ];
 
   return (
@@ -77,72 +73,77 @@ export default function AccountScreen() {
         <TabHeader title={profile?.name && profile.name !== 'Guest' ? profile.name : 'My account'}
           subtitle={profile?.email || 'Sign-in coming soon'}
           right={
-            <View style={[styles.tierBadge, { backgroundColor: tier.color + '22' }]}>
-              <Text style={[styles.tierText, { color: tier.color }]}>{tier.name}</Text>
+            <View style={[styles.tierBadge, { backgroundColor: colors.surfaceSunken }]}>
+              <Text style={[styles.tierText, { color: colors[profile?.tier || 'silver'] }]}>{tier.name}</Text>
             </View>
           } />
 
-        {/* Membership card */}
-        <LinearGradient colors={[colors.primaryDark, brand.green, '#2F6FA8']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.membershipCard}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <View>
-              <Text style={styles.membershipLabel}>Health Points</Text>
-              <Text style={styles.membershipPoints}>{profile?.points ?? 0}</Text>
+        {/* Preview notice first, so the status is clear before any reward controls */}
+        <View style={[styles.preview, { backgroundColor: colors.infoBg }]}>
+          <Ionicons name="information-circle-outline" size={18} color={colors.info} />
+          <Text style={[styles.previewText, { color: colors.text }]}>
+            Health Points are in preview. Points and referrals are saved on this device until EMIS+ sign-in launches.
+          </Text>
+        </View>
+
+        {/* Health Points */}
+        <View style={[styles.pointsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.pointsLabel, { color: colors.textSecondary }]}>Health Points</Text>
+              <Text style={[styles.pointsValue, { color: colors.primary }]}>{profile?.points ?? 0}</Text>
             </View>
-            <Image source={require('@/assets/images/art/banner-rewards.webp')} style={styles.membershipArt} resizeMode="contain" />
+            <Image source={require('@/assets/images/art/banner-rewards.webp')} style={styles.pointsArt} resizeMode="contain" />
           </View>
           {nextTier && (
-            <View style={{ marginTop: 16 }}>
-              <View style={[styles.progressTrack, { backgroundColor: 'rgba(255,255,255,0.2)' }]}>
-                <View style={[styles.progressFill, { width: `${progress}%`, backgroundColor: colors.accent }]} />
+            <View style={{ marginTop: 12 }}>
+              <View style={[styles.progressTrack, { backgroundColor: colors.surfaceSunken }]}>
+                <View style={[styles.progressFill, { width: `${Math.max(progress, 2)}%`, backgroundColor: colors.primary }]} />
               </View>
-              <Text style={styles.progressText}>
-                S${(nextTier.minSpend - (profile?.totalSpent || 0)).toFixed(2)} to {nextTier.name}
+              <Text style={[styles.progressText, { color: colors.textSecondary }]}>
+                S${(nextTier.minSpend - (profile?.totalSpent || 0)).toFixed(2)} more to reach {nextTier.name}
               </Text>
             </View>
           )}
-        </LinearGradient>
+        </View>
 
-        {/* Stats row */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.statValue, { color: colors.text }]}>S${(profile?.totalSpent || 0).toFixed(0)}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total spent</Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.statValue, { color: colors.text }]}>{profile?.referralCount ?? 0}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Referrals</Text>
-          </View>
-          <View style={[styles.statCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.statValue, { color: colors.text }]}>{transactions.length}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Transactions</Text>
-          </View>
+        {/* Stats */}
+        <View style={[styles.statsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          {[
+            { v: `S$${(profile?.totalSpent || 0).toFixed(0)}`, l: 'Total spent' },
+            { v: String(profile?.referralCount ?? 0), l: 'Referrals' },
+            { v: String(transactions.length), l: 'Activity' },
+          ].map((st, i) => (
+            <View key={st.l} style={[styles.stat, i > 0 && { borderLeftWidth: 1, borderLeftColor: colors.border }]}>
+              <Text style={[styles.statValue, { color: colors.text }]}>{st.v}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{st.l}</Text>
+            </View>
+          ))}
         </View>
 
         {/* Referral */}
         <View style={[styles.referralCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text style={[styles.referralTitle, { color: colors.text }]}>Your referral code</Text>
-          <Text style={[styles.referralCode, { color: colors.primary }]}>{profile?.referralCode || '------'}</Text>
+          <View style={[styles.codeBox, { backgroundColor: colors.primaryLight }]}>
+            <Text style={[styles.referralCode, { color: colors.primaryInk }]}>{profile?.referralCode || '------'}</Text>
+          </View>
           <Text style={[styles.referralDesc, { color: colors.textSecondary }]}>
-            Share with friends - you both get 100 bonus points
+            Share it with a friend. You both get 100 bonus points.
           </Text>
           <TouchableOpacity style={[styles.referralBtn, { backgroundColor: colors.primary }]} onPress={shareCode}>
-            <Text style={[styles.referralBtnText, { color: '#fff' }]}>Share my code</Text>
+            <Text style={[styles.referralBtnText, { color: colors.onPrimary }]}>Share my code</Text>
           </TouchableOpacity>
           {referralMsg && (
             <Text style={{ marginTop: 10, fontSize: 14, fontWeight: '600', textAlign: 'center', color: referralMsg.ok ? colors.success : colors.danger }}>
               {referralMsg.text}
             </Text>
           )}
-          <Text style={[styles.referralDesc, { color: colors.textTertiary, marginTop: 10 }]}>
-            Preview: points and referrals are saved on this device until EMIS+ accounts launch.
-          </Text>
           {!referralClaimed && (
             <TouchableOpacity
               style={[styles.referralBtn, { backgroundColor: colors.primaryLight }]}
               onPress={() => setShowReferralInput(!showReferralInput)}
             >
-              <Text style={[styles.referralBtnText, { color: colors.primaryDark }]}>
+              <Text style={[styles.referralBtnText, { color: colors.primaryInk }]}>
                 {showReferralInput ? 'Cancel' : 'Have a referral code?'}
               </Text>
             </TouchableOpacity>
@@ -158,7 +159,7 @@ export default function AccountScreen() {
                 autoCapitalize="characters"
               />
               <TouchableOpacity style={[styles.btn, { backgroundColor: colors.primary }]} onPress={handleApplyReferral}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>Apply & claim bonus</Text>
+                <Text style={{ color: colors.onPrimary, fontWeight: '600' }}>Apply & claim bonus</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -208,6 +209,16 @@ export default function AccountScreen() {
 }
 
 const styles = StyleSheet.create({
+  preview: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginHorizontal: 20, padding: 14, borderRadius: 14 },
+  previewText: { flex: 1, fontSize: 14, lineHeight: 20 },
+  pointsCard: { marginHorizontal: 20, marginTop: 12, borderRadius: 18, borderWidth: 1, padding: 18 },
+  pointsLabel: { fontSize: 14, fontWeight: '600' },
+  pointsValue: { fontSize: 38, fontWeight: '800', marginTop: 2, letterSpacing: -0.5 },
+  pointsArt: { width: 60, height: 60 },
+  progressText: { fontSize: 13, marginTop: 6 },
+  statsCard: { flexDirection: 'row', marginHorizontal: 20, marginTop: 12, borderRadius: 18, borderWidth: 1 },
+  stat: { flex: 1, alignItems: 'center', paddingVertical: 14 },
+  codeBox: { marginTop: 8, borderRadius: 14, paddingHorizontal: 18, paddingVertical: 10, alignSelf: 'stretch', alignItems: 'center' },
   container: { flex: 1 },
   profileRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16, gap: 14 },
   avatar: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' },
@@ -216,22 +227,13 @@ const styles = StyleSheet.create({
   email: { fontSize: 13, marginTop: 2 },
   tierBadge: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 },
   tierText: { fontSize: 12, fontWeight: '700' },
-  membershipCard: { marginHorizontal: 20, borderRadius: 22, padding: 20, overflow: 'hidden', shadowColor: '#17302A', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 6 },
-  membershipArt: { width: 84, height: 84 },
-  membershipLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '500' },
-  membershipPoints: { color: '#fff', fontSize: 34, fontWeight: '700', marginTop: 4 },
-  membershipTier: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
-  membershipTierText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  progressTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 4 },
-  progressText: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 6 },
-  statsRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 10, marginTop: 16 },
-  statCard: { flex: 1, borderRadius: 14, padding: 14, borderWidth: 1, alignItems: 'center' },
   statValue: { fontSize: 20, fontWeight: '700' },
   statLabel: { fontSize: 11, marginTop: 2, textAlign: 'center' },
   referralCard: { margin: 20, borderRadius: 16, padding: 16, borderWidth: 1, alignItems: 'center' },
   referralTitle: { fontSize: 14, fontWeight: '600' },
-  referralCode: { fontSize: 26, fontWeight: '800', letterSpacing: 3, marginTop: 4, fontFamily: 'monospace' },
+  referralCode: { fontSize: 24, fontWeight: '800', letterSpacing: 3 },
   referralDesc: { fontSize: 12, marginTop: 6, textAlign: 'center' },
   referralBtn: { marginTop: 12, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 10 },
   referralBtnText: { fontSize: 14, fontWeight: '600' },

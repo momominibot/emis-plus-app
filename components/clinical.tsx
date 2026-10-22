@@ -138,11 +138,20 @@ export function OptionCard({
       style={[
         styles.option,
         wide ? styles.optionWide : styles.optionHalf,
-        { backgroundColor: colors.surface, borderColor: selected ? colors.primary : colors.border, borderWidth: selected ? 2 : 1 },
+        {
+          backgroundColor: selected ? colors.primaryLight : colors.surface,
+          borderColor: selected ? colors.primary : colors.border,
+          borderWidth: selected ? 1.5 : 1,
+        },
       ]}
     >
+      {selected ? (
+        <View style={[styles.optionCheck, { backgroundColor: colors.primary }]}>
+          <Ionicons name="checkmark" size={14} color={colors.onPrimary} />
+        </View>
+      ) : null}
       {image ? <Image source={image} style={styles.optionImage} resizeMode="contain" /> : null}
-      <Text style={[styles.optionLabel, { color: colors.text, textAlign: wide ? 'left' : 'center' }]}>{label}</Text>
+      <Text style={[styles.optionLabel, { color: selected ? colors.primaryInk : colors.text, textAlign: wide ? 'left' : 'center', paddingRight: wide && selected ? 26 : 0 }]}>{label}</Text>
       {help ? <Text style={[styles.optionHelp, { color: colors.textSecondary, textAlign: wide ? 'left' : 'center' }]}>{help}</Text> : null}
     </TouchableOpacity>
   );
@@ -159,9 +168,16 @@ export function CheckRow({ label, checked, onChange }: { label: string; checked:
       onPress={() => onChange(!checked)}
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
-      style={[styles.checkRow, { backgroundColor: colors.surface, borderColor: checked ? colors.primary : colors.border }]}
+      style={[styles.checkRow, {
+        backgroundColor: checked ? colors.primaryLight : colors.surface,
+        borderColor: checked ? colors.primary : colors.border,
+      }]}
     >
-      <Ionicons name={checked ? 'checkbox' : 'square-outline'} size={24} color={checked ? colors.primary : colors.textTertiary} />
+      <View style={[styles.checkBox, checked
+        ? { backgroundColor: colors.primary, borderColor: colors.primary }
+        : { borderColor: colors.controlBorder, backgroundColor: colors.surface }]}>
+        {checked ? <Ionicons name="checkmark" size={16} color={colors.onPrimary} /> : null}
+      </View>
       <Text style={[styles.bodyText, { color: colors.text, flex: 1 }]}>{label}</Text>
     </TouchableOpacity>
   );
@@ -176,7 +192,7 @@ export function PrimaryButton({ label, onPress, disabled }: { label: string; onP
       accessibilityRole="button"
       style={[styles.primaryBtn, { backgroundColor: disabled ? colors.textTertiary : colors.primary }]}
     >
-      <Text style={styles.primaryBtnText}>{label}</Text>
+      <Text style={[styles.primaryBtnText, { color: colors.onPrimary }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -283,15 +299,17 @@ const styles = StyleSheet.create({
   backBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', paddingVertical: 8 },
   backText: { fontSize: 15, fontWeight: '600' },
   optionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  option: { borderRadius: 14, padding: 12, alignItems: 'center', minHeight: 56, justifyContent: 'center' },
+  option: { borderRadius: 16, padding: 14, alignItems: 'center', minHeight: 56, justifyContent: 'center' },
+  optionCheck: { position: 'absolute', top: 10, right: 10, width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   optionHalf: { flexBasis: '47%', flexGrow: 1 },
   optionWide: { flexBasis: '100%', alignItems: 'flex-start' },
   optionImage: { width: 72, height: 72, marginBottom: 6 },
   optionLabel: { fontSize: 15, fontWeight: '700' },
   optionHelp: { fontSize: 13, lineHeight: 18, marginTop: 3 },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 12, borderWidth: 1 },
-  primaryBtn: { borderRadius: 12, paddingVertical: 15, alignItems: 'center' },
-  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 14, minHeight: 56, borderRadius: 14, borderWidth: 1 },
+  checkBox: { width: 26, height: 26, borderRadius: 8, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  primaryBtn: { borderRadius: 14, minHeight: 52, paddingVertical: 15, alignItems: 'center', justifyContent: 'center' },
+  primaryBtnText: { fontSize: 16, fontWeight: '700' },
   secondaryBtn: { borderRadius: 12, paddingVertical: 13, alignItems: 'center', borderWidth: 1 },
   secondaryBtnText: { fontSize: 15, fontWeight: '600' },
   recHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
